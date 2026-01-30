@@ -1,22 +1,28 @@
 export { handleRazorpayError } from './error-handler'
 export {
   cancelSubscriptionSchema,
-  getPlansSchema,
-  pauseSubscriptionSchema,
-  resumeSubscriptionSchema,
+  createOrUpdateSubscriptionSchema,
+  listSubscriptionsSchema,
+  restoreSubscriptionSchema,
   subscribeSchema,
   verifyPaymentSchema,
 } from './schemas'
+export type { CreateOrUpdateSubscriptionInput } from './schemas'
 export type {
   OnWebhookEventCallback,
+  PlanFreeTrial,
+  PlanLimits,
   RazorpayApiResponse,
   RazorpayErrorResponse,
+  RazorpayPlan,
   RazorpayPluginOptions,
   RazorpaySubscription,
-  RazorpaySubscriptionRecord,
   RazorpaySuccessResponse,
   RazorpayUserRecord,
   RazorpayWebhookContext,
   RazorpayWebhookEvent,
   RazorpayWebhookPayload,
+  SubscriptionOptions,
+  SubscriptionRecord,
+  SubscriptionStatus,
 } from './types'

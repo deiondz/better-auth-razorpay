@@ -1,6 +1,11 @@
 import { createHmac } from 'node:crypto'
 import { createAuthEndpoint } from 'better-auth/api'
-import type { OnWebhookEventCallback } from '../lib/types'
+import type {
+  OnWebhookEventCallback,
+  RazorpayPluginOptions,
+  RazorpaySubscription,
+  SubscriptionRecord,
+} from '../lib'
 
 export interface WebhookResult {
   success: boolean
@@ -15,83 +20,86 @@ interface SubscriptionEntity {
   current_end?: number
 }
 
-interface WebhookContext {
-  adapter: {
-    findOne: (params: {
-      model: string
-      where: { field: string; value: string }[]
-    }) => Promise<unknown>
-    update: (params: {
-      model: string
-      where: { field: string; value: string }[]
-      update: Record<string, unknown>
-    }) => Promise<unknown>
-  }
+interface WebhookAdapter {
+  findOne: (params: {
+    model: string
+    where: { field: string; value: string }[]
+  }) => Promise<unknown>
+  update: (params: {
+    model: string
+    where: { field: string; value: string }[]
+    update: { data: Record<string, unknown> }
+  }) => Promise<unknown>
 }
 
 type EventHandler = (
-  adapter: WebhookContext['adapter'],
-  subscriptionId: string,
-  userId: string,
+  adapter: WebhookAdapter,
+  razorpaySubscriptionId: string,
+  record: SubscriptionRecord,
   subscription: SubscriptionEntity
 ) => Promise<void>
 
-const updateSubscriptionAndUser = async (
-  adapter: WebhookContext['adapter'],
-  subscriptionId: string,
-  userId: string,
-  status: string,
-  extraUserFields?: Record<string, unknown>
+function toLocalStatus(razorpayStatus: string): SubscriptionRecord['status'] {
+  const map: Record<string, SubscriptionRecord['status']> = {
+    created: 'created',
+    authenticated: 'pending',
+    active: 'active',
+    pending: 'pending',
+    halted: 'halted',
+    cancelled: 'cancelled',
+    completed: 'completed',
+    expired: 'expired',
+  }
+  return map[razorpayStatus] ?? 'pending'
+}
+
+const updateSubscriptionRecord = async (
+  adapter: WebhookAdapter,
+  razorpaySubscriptionId: string,
+  data: Record<string, unknown>
 ): Promise<void> => {
   await adapter.update({
-    model: 'razorpaySubscription',
-    where: [{ field: 'subscriptionId', value: subscriptionId }],
-    update: { status },
-  })
-
-  await adapter.update({
-    model: 'user',
-    where: [{ field: 'id', value: userId }],
-    update: { subscriptionStatus: status, ...extraUserFields },
+    model: 'subscription',
+    where: [{ field: 'razorpaySubscriptionId', value: razorpaySubscriptionId }],
+    update: { data: { ...data, updatedAt: new Date() } },
   })
 }
 
-const createStatusHandler =
-  (
-    status: string,
-    extraUserFields?: (sub: SubscriptionEntity) => Record<string, unknown>
-  ): EventHandler =>
-  async (adapter, subscriptionId, userId, subscription) => {
-    const extra = extraUserFields ? extraUserFields(subscription) : {}
-    await updateSubscriptionAndUser(adapter, subscriptionId, userId, status, extra)
+const createStatusHandler = (
+  status: SubscriptionRecord['status'],
+  extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
+): EventHandler =>
+  async (adapter, razorpaySubscriptionId, record, subscription) => {
+    const periodStart = subscription.current_start
+      ? new Date(subscription.current_start * 1000)
+      : null
+    const periodEnd = subscription.current_end
+      ? new Date(subscription.current_end * 1000)
+      : null
+    await updateSubscriptionRecord(adapter, razorpaySubscriptionId, {
+      status,
+      ...(periodStart !== null && { periodStart }),
+      ...(periodEnd !== null && { periodEnd }),
+      ...(extraFields?.(subscription) ?? {}),
+    })
   }
 
 const eventHandlers: Record<string, EventHandler> = {
-  'subscription.authenticated': createStatusHandler('authenticated', (sub) => ({
-    subscriptionId: sub.id,
-    subscriptionPlanId: sub.plan_id,
-  })),
-  'subscription.activated': createStatusHandler('active', (sub) => ({
-    subscriptionId: sub.id,
-    subscriptionPlanId: sub.plan_id,
-  })),
+  'subscription.authenticated': createStatusHandler('pending'),
+  'subscription.activated': createStatusHandler('active'),
   'subscription.charged': createStatusHandler('active', (sub) => ({
-    lastPaymentDate: new Date(),
-    nextBillingDate: sub.current_end ? new Date(sub.current_end * 1000) : null,
-    subscriptionCurrentPeriodEnd: sub.current_end ? new Date(sub.current_end * 1000) : null,
+    periodEnd: sub.current_end ? new Date(sub.current_end * 1000) : undefined,
   })),
   'subscription.cancelled': createStatusHandler('cancelled', () => ({ cancelAtPeriodEnd: false })),
-  'subscription.paused': createStatusHandler('paused'),
+  'subscription.paused': createStatusHandler('halted'),
   'subscription.resumed': createStatusHandler('active'),
   'subscription.pending': createStatusHandler('pending'),
   'subscription.halted': createStatusHandler('halted'),
+  'subscription.expired': createStatusHandler('expired'),
 }
 
 const getRawBody = async (request: Request | undefined, fallbackBody: unknown): Promise<string> => {
-  if (!request) {
-    return JSON.stringify(fallbackBody)
-  }
-
+  if (!request) return JSON.stringify(fallbackBody)
   try {
     const clonedRequest = request.clone()
     const text = await clonedRequest.text()
@@ -108,7 +116,7 @@ const verifySignature = (rawBody: string, signature: string, secret: string): bo
 
 const invokeCallback = async (
   onWebhookEvent: OnWebhookEventCallback,
-  adapter: WebhookContext['adapter'],
+  adapter: WebhookAdapter,
   event: string,
   subscription: SubscriptionEntity,
   payload: { payment?: { entity?: { id: string; amount: number; currency?: string } } },
@@ -117,10 +125,8 @@ const invokeCallback = async (
   const user = (await adapter.findOne({
     model: 'user',
     where: [{ field: 'id', value: userId }],
-  })) as { id: string; email: string; name: string } | null
-
+  })) as { id: string; email?: string; name?: string } | null
   if (!user) return
-
   await onWebhookEvent(
     {
       event: event as Parameters<OnWebhookEventCallback>[0]['event'],
@@ -135,7 +141,7 @@ const invokeCallback = async (
         ? {
             id: payload.payment.entity.id,
             amount: payload.payment.entity.amount,
-            currency: payload.payment.entity.currency || 'INR',
+            currency: payload.payment.entity.currency ?? 'INR',
           }
         : undefined,
     },
@@ -144,103 +150,80 @@ const invokeCallback = async (
 }
 
 /**
- * Handles Razorpay webhook events for subscription lifecycle management.
- *
- * @param webhookSecret - Optional webhook secret for signature verification
- * @param onWebhookEvent - Optional callback function invoked after webhook processing
- * @returns A Better Auth endpoint handler
- *
- * @remarks
- * This endpoint:
- * - Verifies webhook signature using HMAC SHA256
- * - Processes subscription events (authenticated, activated, charged, cancelled, paused, resumed, etc.)
- * - Updates subscription and user records based on event type
- * - Invokes optional callback for custom business logic
- * - Does not require authentication (webhook endpoint)
- *
- * @example
- * Supported events:
- * - subscription.authenticated
- * - subscription.activated
- * - subscription.charged
- * - subscription.cancelled
- * - subscription.paused
- * - subscription.resumed
- * - subscription.pending
- * - subscription.halted
+ * Handles Razorpay webhook events for subscription lifecycle.
+ * Updates the subscription model only (no user subscription fields).
  */
-export const webhook = (webhookSecret?: string, onWebhookEvent?: OnWebhookEventCallback) =>
-  createAuthEndpoint('/razorpay/webhook', { method: 'POST' }, async (_ctx) => {
+export const webhook = (
+  webhookSecret: string | undefined,
+  onWebhookEvent: OnWebhookEventCallback | undefined,
+  pluginOptions: Pick<RazorpayPluginOptions, 'subscription' | 'onEvent'>
+) =>
+  createAuthEndpoint('/razorpay/webhook', { method: 'POST' }, async (ctx) => {
     if (!webhookSecret) {
       return { success: false, message: 'Webhook secret not configured' }
     }
-
-    const signature = _ctx.request?.headers.get('x-razorpay-signature')
+    const signature = ctx.request?.headers.get('x-razorpay-signature')
     if (!signature) {
       return { success: false, message: 'Missing webhook signature' }
     }
-
-    const rawBody = await getRawBody(_ctx.request, _ctx.body)
-
+    const rawBody = await getRawBody(ctx.request, ctx.body)
     if (!verifySignature(rawBody, signature, webhookSecret)) {
       return { success: false, message: 'Invalid webhook signature' }
     }
-
-    return processWebhookEvent(_ctx.context.adapter, rawBody, _ctx.body, onWebhookEvent)
+    return processWebhookEvent(
+      ctx.context.adapter as unknown as WebhookAdapter,
+      rawBody,
+      ctx.body,
+      onWebhookEvent,
+      pluginOptions
+    )
   })
 
-const processWebhookEvent = async (
-  adapter: WebhookContext['adapter'],
+async function processWebhookEvent(
+  adapter: WebhookAdapter,
   rawBody: string,
   fallbackBody: unknown,
-  onWebhookEvent?: OnWebhookEventCallback
-): Promise<WebhookResult> => {
+  onWebhookEvent?: OnWebhookEventCallback,
+  pluginOptions?: Pick<RazorpayPluginOptions, 'subscription' | 'onEvent'>
+): Promise<WebhookResult> {
   const isDev = process.env.NODE_ENV === 'development'
-
   try {
     const webhookData = rawBody ? JSON.parse(rawBody) : fallbackBody
     const { event, payload } = webhookData
-
     if (!event || !payload) {
       return {
         success: false,
-        message: isDev
-          ? 'Invalid webhook payload: missing event or payload'
-          : 'Invalid webhook payload',
+        message: isDev ? 'Invalid webhook payload: missing event or payload' : 'Invalid webhook payload',
       }
     }
 
-    const subscription = payload.subscription?.entity as SubscriptionEntity | undefined
-    if (!subscription) {
+    const subscriptionEntity = payload.subscription?.entity as SubscriptionEntity | undefined
+    if (!subscriptionEntity) {
       return {
         success: false,
-        message: isDev
-          ? 'Invalid webhook payload: missing subscription data'
-          : 'Invalid webhook payload',
+        message: isDev ? 'Invalid webhook payload: missing subscription data' : 'Invalid webhook payload',
       }
     }
 
-    const subscriptionRecord = (await adapter.findOne({
-      model: 'razorpaySubscription',
-      where: [{ field: 'subscriptionId', value: subscription.id }],
-    })) as { userId?: string } | null
+    const record = (await adapter.findOne({
+      model: 'subscription',
+      where: [{ field: 'razorpaySubscriptionId', value: subscriptionEntity.id }],
+    })) as SubscriptionRecord | null
 
-    if (!subscriptionRecord) {
+    if (!record) {
       return {
         success: false,
         message: isDev
-          ? `Subscription record not found for subscription ${subscription.id}`
+          ? `Subscription record not found for ${subscriptionEntity.id}`
           : 'Subscription record not found',
       }
     }
 
-    const userId = subscriptionRecord.userId
+    const userId = record.referenceId
     if (!userId) {
       return {
         success: false,
-        message: isDev
-          ? `User ID not found in subscription record for subscription ${subscription.id}`
-          : 'User ID not found in subscription record',
+        message: isDev ? 'referenceId not found on subscription record' : 'Invalid subscription record',
       }
     }
 
@@ -252,14 +235,63 @@ const processWebhookEvent = async (
       }
     }
 
-    await handler(adapter, subscription.id, userId, subscription)
+    await handler(adapter, subscriptionEntity.id, record, subscriptionEntity)
+
+    if (pluginOptions?.onEvent) {
+      try {
+        await pluginOptions.onEvent({ event, ...payload })
+      } catch {
+        // ignore
+      }
+    }
+
+    if (pluginOptions?.subscription) {
+      const sub = pluginOptions.subscription
+      const rpSub = {
+        id: subscriptionEntity.id,
+        plan_id: subscriptionEntity.plan_id,
+        status: subscriptionEntity.status,
+        current_start: subscriptionEntity.current_start,
+        current_end: subscriptionEntity.current_end,
+      } as RazorpaySubscription
+      const updatedRecord = { ...record, status: toLocalStatus(subscriptionEntity.status) }
+      try {
+        if (event === 'subscription.activated' && sub.onSubscriptionActivated) {
+          await sub.onSubscriptionActivated({
+            event,
+            razorpaySubscription: rpSub,
+            subscription: updatedRecord as SubscriptionRecord,
+            plan: { name: record.plan, monthlyPlanId: subscriptionEntity.plan_id },
+          })
+        } else if (
+          ['subscription.cancelled', 'subscription.expired'].includes(event) &&
+          sub.onSubscriptionCancel
+        ) {
+          await sub.onSubscriptionCancel({
+            event,
+            razorpaySubscription: rpSub,
+            subscription: updatedRecord as SubscriptionRecord,
+          })
+        } else if (sub.onSubscriptionUpdate) {
+          await sub.onSubscriptionUpdate({ event, subscription: updatedRecord as SubscriptionRecord })
+        }
+      } catch {
+        // ignore callback errors
+      }
+    }
 
     if (onWebhookEvent) {
       try {
-        await invokeCallback(onWebhookEvent, adapter, event, subscription, payload, userId)
+        await invokeCallback(
+          onWebhookEvent,
+          adapter,
+          event,
+          subscriptionEntity,
+          payload,
+          userId
+        )
       } catch {
-        // Silently handle callback errors - they shouldn't break webhook processing
-        // The callback is for custom logic and failures there shouldn't affect core functionality
+        // ignore
       }
     }
 

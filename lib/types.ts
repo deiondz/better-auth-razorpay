@@ -1,6 +1,5 @@
 /**
- * Razorpay subscription response interface from the Razorpay API.
- * This represents the full subscription object returned by Razorpay API calls.
+ * Razorpay subscription response from the Razorpay API.
  */
 export interface RazorpaySubscription {
   id: string
@@ -29,33 +28,103 @@ export interface RazorpaySubscription {
   remaining_count: string
 }
 
-/**
- * Subscription record stored in the auth adapter.
- */
-export interface RazorpaySubscriptionRecord {
-  userId: string
-  subscriptionId: string
-  planId: string
-  status: string
+/** Local subscription status aligned with Razorpay and plugin lifecycle. */
+export type SubscriptionStatus =
+  | 'created'
+  | 'active'
+  | 'pending'
+  | 'halted'
+  | 'cancelled'
+  | 'completed'
+  | 'expired'
+  | 'trialing'
+
+/** Local subscription record stored in the auth adapter. */
+export interface SubscriptionRecord {
+  id: string
+  plan: string
+  referenceId: string
+  razorpayCustomerId?: string | null
+  razorpaySubscriptionId?: string | null
+  status: SubscriptionStatus
+  trialStart?: Date | null
+  trialEnd?: Date | null
+  periodStart?: Date | null
+  periodEnd?: Date | null
+  cancelAtPeriodEnd: boolean
+  seats: number
+  groupId?: string | null
+  createdAt: Date
+  updatedAt: Date
 }
 
-/**
- * User record shape used by the Razorpay plugin.
- */
+/** Plan limits (customizable per plan). */
+export interface PlanLimits {
+  [key: string]: number
+}
+
+/** Free trial configuration for a plan. */
+export interface PlanFreeTrial {
+  days: number
+  onTrialStart?: (subscription: SubscriptionRecord) => Promise<void>
+  onTrialEnd?: (args: { subscription: SubscriptionRecord }) => Promise<void>
+}
+
+/** Named plan with monthly/annual Razorpay plan IDs and optional trial. */
+export interface RazorpayPlan {
+  name: string
+  monthlyPlanId: string
+  annualPlanId?: string
+  limits?: PlanLimits
+  freeTrial?: PlanFreeTrial
+}
+
+/** Subscription plugin options (plans, callbacks, authorization). */
+export interface SubscriptionOptions {
+  enabled: boolean
+  plans: RazorpayPlan[] | (() => Promise<RazorpayPlan[]>)
+  requireEmailVerification?: boolean
+  authorizeReference?: (args: {
+    user: { id: string; email?: string; name?: string; [key: string]: unknown }
+    referenceId: string
+    action: string
+  }) => Promise<boolean>
+  getSubscriptionCreateParams?: (args: {
+    user: { id: string; email?: string; name?: string; [key: string]: unknown }
+    session: unknown
+    plan: RazorpayPlan
+    subscription: SubscriptionRecord
+  }) => Promise<{ params?: Record<string, unknown> }>
+  onSubscriptionCreated?: (args: {
+    razorpaySubscription: RazorpaySubscription
+    subscription: SubscriptionRecord
+    plan: RazorpayPlan
+  }) => Promise<void>
+  onSubscriptionActivated?: (args: {
+    event: string
+    razorpaySubscription: RazorpaySubscription
+    subscription: SubscriptionRecord
+    plan: RazorpayPlan
+  }) => Promise<void>
+  onSubscriptionUpdate?: (args: { event: string; subscription: SubscriptionRecord }) => Promise<void>
+  onSubscriptionCancel?: (args: {
+    event: string
+    razorpaySubscription: RazorpaySubscription
+    subscription: SubscriptionRecord
+  }) => Promise<void>
+}
+
+/** User record shape used by the Razorpay plugin (customer ID on user). */
 export interface RazorpayUserRecord {
   id: string
   email?: string
   name?: string
-  subscriptionId?: string
-  subscriptionPlanId?: string
-  subscriptionStatus?: string
-  subscriptionCurrentPeriodEnd?: Date | null
-  cancelAtPeriodEnd?: boolean
-  lastPaymentDate?: Date | null
-  nextBillingDate?: Date | null
+  razorpayCustomerId?: string | null
+  [key: string]: unknown
 }
 
-type RazorpayWebhookEvent =
+/** Razorpay webhook event types. */
+export type RazorpayWebhookEvent =
   | 'subscription.authenticated'
   | 'subscription.activated'
   | 'subscription.charged'
@@ -64,8 +133,9 @@ type RazorpayWebhookEvent =
   | 'subscription.resumed'
   | 'subscription.pending'
   | 'subscription.halted'
+  | 'subscription.expired'
 
-interface RazorpayWebhookPayload {
+export interface RazorpayWebhookPayload {
   event: RazorpayWebhookEvent
   subscription: {
     id: string
@@ -73,79 +143,62 @@ interface RazorpayWebhookPayload {
     status: string
     current_start?: number
     current_end?: number
-    [key: string]: unknown // Allow other Razorpay subscription fields
+    [key: string]: unknown
   }
   payment?: {
     id: string
     amount: number
     currency: string
-    [key: string]: unknown // Allow other Razorpay payment fields
+    [key: string]: unknown
   }
 }
 
-interface RazorpayWebhookContext {
+export interface RazorpayWebhookContext {
   userId: string
-  user: {
-    id: string
-    email: string
-    name: string
-    [key: string]: unknown // Allow other user fields
-  }
+  user: { id: string; email?: string; name?: string; [key: string]: unknown }
 }
 
-/**
- * Callback function invoked after webhook events are processed.
- * Can be used for any custom logic: emails, notifications, analytics, integrations, etc.
- */
-type OnWebhookEventCallback = (
+export type OnWebhookEventCallback = (
   payload: RazorpayWebhookPayload,
   context: RazorpayWebhookContext
 ) => Promise<void>
 
-interface RazorpayPluginOptions {
-  keyId: string
-  keySecret: string
-  webhookSecret?: string
-  plans: string[] // Array of plan IDs from Razorpay dashboard
-  /**
-   * Optional callback function invoked after webhook events are processed.
-   * Use this for any custom logic: sending emails, updating external systems,
-   * analytics tracking, integrations, or any other business logic.
-   */
+/** Main plugin options: client, webhook secret, customer creation, subscription config, callbacks. */
+export interface RazorpayPluginOptions {
+  /** Initialized Razorpay client instance. */
+  razorpayClient: import('razorpay')
+  /** Webhook secret for signature verification. */
+  razorpayWebhookSecret?: string
+  /** Create Razorpay customer when user signs up. Default: false. */
+  createCustomerOnSignUp?: boolean
+  /** Called after a Razorpay customer is created. */
+  onCustomerCreate?: (args: {
+    user: RazorpayUserRecord
+    razorpayCustomer: { id: string; [key: string]: unknown }
+  }) => Promise<void>
+  /** Custom params (e.g. notes) when creating Razorpay customer. */
+  getCustomerCreateParams?: (args: {
+    user: RazorpayUserRecord
+    session: unknown
+  }) => Promise<{ params?: Record<string, unknown> }>
+  /** Subscription feature config (plans, callbacks). */
+  subscription?: SubscriptionOptions
+  /** Global callback for all processed webhook events. */
+  onEvent?: (event: { event: string; [key: string]: unknown }) => Promise<void>
+  /** Legacy: callback after webhook events are processed (payload + context). */
   onWebhookEvent?: OnWebhookEventCallback
 }
 
-/**
- * Standard success response structure for Razorpay API endpoints.
- */
 export interface RazorpaySuccessResponse<T = unknown> {
   success: true
   data: T
 }
 
-/**
- * Standard error response structure for Razorpay API endpoints.
- */
 export interface RazorpayErrorResponse {
   success: false
-  error: {
-    code: string
-    description: string
-    [key: string]: unknown // Allow additional error metadata
-  }
+  error: { code: string; description: string; [key: string]: unknown }
 }
 
-/**
- * Union type for all Razorpay API responses.
- */
 export type RazorpayApiResponse<T = unknown> =
   | RazorpaySuccessResponse<T>
   | RazorpayErrorResponse
-
-export type {
-  RazorpayPluginOptions,
-  RazorpayWebhookEvent,
-  RazorpayWebhookPayload,
-  RazorpayWebhookContext,
-  OnWebhookEventCallback,
-}

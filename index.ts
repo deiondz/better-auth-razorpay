@@ -1,123 +1,156 @@
 import type { BetterAuthPlugin } from 'better-auth'
-import Razorpay from 'razorpay'
 import {
   cancelSubscription,
+  createOrUpdateSubscription,
   getPlans,
-  getSubscription,
-  pauseSubscription,
-  resumeSubscription,
-  subscribe,
-  verifyPayment,
+  listSubscriptions,
+  restoreSubscription,
   webhook,
 } from './api'
-import type { RazorpayPluginOptions } from './lib'
+import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
 
 /**
  * Razorpay plugin for Better Auth.
  *
- * Provides subscription management functionality including:
- * - Creating subscriptions
- * - Managing subscription lifecycle (pause, resume, cancel)
- * - Payment verification
- * - Webhook handling for subscription events
- * - Plan retrieval
+ * Aligns with the subscription flow from the community plugin:
+ * - Subscription: create-or-update (checkout URL), cancel, restore, list
+ * - Customer: optional creation on sign-up, callbacks and params
+ * - Webhooks: subscription events (activated, cancelled, expired, etc.) with optional callbacks
+ * - Plans: named plans with monthly/annual IDs, limits, free trial
  *
- * @param options - Plugin configuration options
- * @param options.keyId - Razorpay key ID (required)
- * @param options.keySecret - Razorpay key secret (required)
- * @param options.webhookSecret - Webhook secret for signature verification (optional)
- * @param options.plans - Array of plan IDs from Razorpay dashboard (required)
- * @param options.onWebhookEvent - Optional callback for custom webhook event handling
- * @returns Better Auth plugin configuration
- *
- * @throws {Error} If keyId or keySecret are not provided
- *
- * @example
- * ```typescript
- * import { razorpayPlugin } from '@better-auth/razorpay'
- *
- * const auth = betterAuth({
- *   plugins: [
- *     razorpayPlugin({
- *       keyId: process.env.RAZORPAY_KEY_ID!,
- *       keySecret: process.env.RAZORPAY_KEY_SECRET!,
- *       webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
- *       plans: ['plan_1234567890', 'plan_0987654321'],
- *     }),
- *   ],
- * })
- * ```
+ * @param options - Plugin configuration
+ * @param options.razorpayClient - Initialized Razorpay instance (key_id, key_secret)
+ * @param options.razorpayWebhookSecret - Webhook secret for signature verification
+ * @param options.createCustomerOnSignUp - Create Razorpay customer when user signs up (default: false)
+ * @param options.onCustomerCreate - Callback after customer is created
+ * @param options.getCustomerCreateParams - Custom params when creating customer
+ * @param options.subscription - Subscription config (enabled, plans, callbacks, authorizeReference)
+ * @param options.onEvent - Global callback for all webhook events
  */
 export const razorpayPlugin = (options: RazorpayPluginOptions) => {
-  const { keyId, keySecret, webhookSecret, plans, onWebhookEvent } = options
+  const {
+    razorpayClient,
+    razorpayWebhookSecret,
+    createCustomerOnSignUp = false,
+    onCustomerCreate,
+    getCustomerCreateParams,
+    subscription: subOpts,
+    onEvent,
+  } = options
 
-  if (!keyId || !keySecret) {
-    throw new Error('Razorpay keyId and keySecret are required')
+  if (!razorpayClient) {
+    throw new Error('Razorpay plugin: razorpayClient is required')
   }
 
-  // Initialize Razorpay instance once in plugin closure
-  // This instance is accessible to all endpoints via closure scope
-  const razorpay = new Razorpay({
-    key_id: keyId,
-    key_secret: keySecret,
-  })
+  const razorpay = razorpayClient as import('razorpay')
 
-  return {
+  const plugin = {
     id: 'razorpay-plugin',
 
     schema: {
       user: {
         fields: {
-          subscriptionId: { type: 'string', required: false },
-          subscriptionPlanId: { type: 'string', required: false },
-          subscriptionStatus: { type: 'string', required: false },
-          subscriptionCurrentPeriodEnd: { type: 'date', required: false },
+          razorpayCustomerId: { type: 'string', required: false },
+        },
+      },
+      subscription: {
+        fields: {
+          id: { type: 'string', required: true },
+          plan: { type: 'string', required: true },
+          referenceId: { type: 'string', required: true },
+          razorpayCustomerId: { type: 'string', required: false },
+          razorpaySubscriptionId: { type: 'string', required: false },
+          status: { type: 'string', required: true },
+          trialStart: { type: 'date', required: false },
+          trialEnd: { type: 'date', required: false },
+          periodStart: { type: 'date', required: false },
+          periodEnd: { type: 'date', required: false },
           cancelAtPeriodEnd: { type: 'boolean', required: false },
-          lastPaymentDate: { type: 'date', required: false },
-          nextBillingDate: { type: 'date', required: false },
-        },
-      },
-      razorpayCustomer: {
-        fields: {
-          userId: { type: 'string', unique: true },
-          razorpayCustomerId: { type: 'string', unique: true },
-        },
-      },
-      razorpaySubscription: {
-        fields: {
-          userId: { type: 'string' },
-          subscriptionId: { type: 'string' },
-          planId: { type: 'string' },
-          status: { type: 'string' },
+          seats: { type: 'number', required: false },
+          groupId: { type: 'string', required: false },
+          createdAt: { type: 'date', required: true },
+          updatedAt: { type: 'date', required: true },
         },
       },
     },
 
     endpoints: {
-      subscribe: subscribe(razorpay, plans),
-      'get-plans': getPlans(razorpay, plans),
-      'verify-payment': verifyPayment(keySecret),
-      webhook: webhook(webhookSecret, onWebhookEvent),
-      'get-subscription': getSubscription(razorpay),
-      'pause-subscription': pauseSubscription(razorpay),
-      'cancel-subscription': cancelSubscription(razorpay),
-      'resume-subscription': resumeSubscription(razorpay),
+      'subscription/create-or-update': createOrUpdateSubscription(razorpay, {
+        subscription: subOpts,
+        createCustomerOnSignUp,
+      }),
+      'subscription/cancel': cancelSubscription(razorpay),
+      'subscription/restore': restoreSubscription(razorpay),
+      'subscription/list': listSubscriptions({ subscription: subOpts }),
+      'get-plans': getPlans({ subscription: subOpts }),
+      webhook: webhook(razorpayWebhookSecret, options.onWebhookEvent ?? undefined, {
+        subscription: subOpts,
+        onEvent,
+      }),
     },
-  } satisfies BetterAuthPlugin
+
+    databaseHooks: createCustomerOnSignUp
+      ? {
+          user: {
+            create: {
+              after: async (
+                user: RazorpayUserRecord & { id: string },
+                ctx: { context?: { adapter?: { update: (p: unknown) => Promise<unknown> } }; adapter?: { update: (p: unknown) => Promise<unknown> }; session?: unknown }
+              ) => {
+                const adapter = ctx.context?.adapter ?? (ctx as { adapter?: { update: (p: unknown) => Promise<unknown> } }).adapter
+                if (!adapter?.update) return
+                try {
+                  const params: { name?: string; email?: string; contact?: string; [key: string]: unknown } = {
+                    name: user.name ?? user.email ?? 'Customer',
+                    email: user.email ?? undefined,
+                  }
+                  if (getCustomerCreateParams) {
+                    const extra = await getCustomerCreateParams({
+                      user: user as RazorpayUserRecord,
+                      session: ctx.session,
+                    })
+                    if (extra?.params && typeof extra.params === 'object') {
+                      Object.assign(params, extra.params)
+                    }
+                  }
+                  const customer = await razorpay.customers.create(params)
+                  await adapter.update({
+                    model: 'user',
+                    where: [{ field: 'id', value: user.id }],
+                    update: { data: { razorpayCustomerId: customer.id } },
+                  })
+                  if (onCustomerCreate) {
+                    await onCustomerCreate({
+                      user: user as RazorpayUserRecord,
+                      razorpayCustomer: { id: customer.id, ...(customer as unknown as Record<string, unknown>) },
+                    })
+                  }
+                } catch (err) {
+                  console.error('[better-auth-razorpay] Create customer on sign-up failed:', err)
+                }
+              },
+            },
+          },
+        }
+      : undefined,
+  }
+
+  return plugin as BetterAuthPlugin
 }
 
-// Re-export types for external usage
 export type {
   OnWebhookEventCallback,
   RazorpayApiResponse,
   RazorpayErrorResponse,
+  RazorpayPlan,
   RazorpayPluginOptions,
   RazorpaySubscription,
-  RazorpaySubscriptionRecord,
   RazorpaySuccessResponse,
   RazorpayUserRecord,
   RazorpayWebhookContext,
   RazorpayWebhookEvent,
   RazorpayWebhookPayload,
+  SubscriptionRecord,
+  SubscriptionStatus,
 } from './lib'
 export type { WebhookResult } from './api/webhook'

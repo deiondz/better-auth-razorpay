@@ -1,23 +1,22 @@
 import { createAuthEndpoint, sessionMiddleware } from 'better-auth/api'
 import type Razorpay from 'razorpay'
 import {
-  cancelSubscriptionSchema,
   handleRazorpayError,
-  type RazorpaySubscription,
+  restoreSubscriptionSchema,
   type SubscriptionRecord,
 } from '../lib'
 
 /**
- * POST /api/auth/razorpay/subscription/cancel
- * Cancels subscription by local subscription ID. Optionally cancel immediately.
+ * POST /api/auth/razorpay/subscription/restore
+ * Restores a subscription that was scheduled to cancel at period end.
  */
-export const cancelSubscription = (razorpay: Razorpay) =>
+export const restoreSubscription = (razorpay: Razorpay) =>
   createAuthEndpoint(
-    '/razorpay/subscription/cancel',
+    '/razorpay/subscription/restore',
     { method: 'POST', use: [sessionMiddleware] },
     async (ctx) => {
       try {
-        const body = cancelSubscriptionSchema.parse(ctx.body)
+        const body = restoreSubscriptionSchema.parse(ctx.body)
         const userId = ctx.context.session?.user?.id
         if (!userId) {
           return {
@@ -52,22 +51,15 @@ export const cancelSubscription = (razorpay: Razorpay) =>
           }
         }
 
-        // cancel_at_cycle_end: true = cancel at period end, false = cancel immediately
-        const subscription = (await razorpay.subscriptions.cancel(
-          rpId,
-          !body.immediately
-        )) as RazorpaySubscription
+        // Razorpay: resume a paused subscription (or cancel scheduled cancellation)
+        const subscription = await razorpay.subscriptions.resume(rpId)
 
         await ctx.context.adapter.update({
           model: 'subscription',
           where: [{ field: 'id', value: body.subscriptionId }],
           update: {
             data: {
-              status: 'cancelled',
-              cancelAtPeriodEnd: !body.immediately,
-              periodEnd: subscription.current_end
-                ? new Date(subscription.current_end * 1000)
-                : record.periodEnd,
+              cancelAtPeriodEnd: false,
               updatedAt: new Date(),
             },
           },
@@ -76,11 +68,8 @@ export const cancelSubscription = (razorpay: Razorpay) =>
         return {
           success: true,
           data: {
-            id: subscription.id,
-            status: subscription.status,
-            plan_id: subscription.plan_id,
-            current_end: subscription.current_end,
-            ended_at: subscription.ended_at,
+            id: (subscription as { id: string }).id,
+            status: (subscription as { status: string }).status,
           },
         }
       } catch (error) {

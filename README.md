@@ -12,6 +12,7 @@ A comprehensive subscription management plugin for Better Auth that integrates w
 - [Database Setup](#database-setup)
 - [API Endpoints](#api-endpoints)
 - [Client Usage](#client-usage)
+- [TanStack Query Hooks](#tanstack-query-hooks)
 - [Webhook Setup](#webhook-setup)
 - [TypeScript Types](#typescript-types)
 - [Error Handling](#error-handling)
@@ -21,15 +22,15 @@ A comprehensive subscription management plugin for Better Auth that integrates w
 
 ## Overview
 
-The Razorpay plugin provides a complete subscription management solution with the following features:
+The Razorpay plugin provides a subscription management solution aligned with the [community plugin design](https://github.com/iamjasonkendrick/better-auth-razorpay):
 
-- ✅ **Subscription Management**: Create, pause, resume, and cancel subscriptions
-- ✅ **Payment Verification**: Secure payment signature verification
-- ✅ **Webhook Handling**: Automatic processing of Razorpay webhook events
-- ✅ **Plan Management**: Retrieve and manage subscription plans
-- ✅ **Type Safety**: Full TypeScript support with comprehensive type definitions
-- ✅ **Error Handling**: Robust error handling with detailed error codes
-- ✅ **Security**: Production-safe error messages and signature verification
+- ✅ **Subscription flow**: Create-or-update (returns checkout URL), cancel (at period end or immediately), restore, list active/trialing subscriptions
+- ✅ **Named plans**: Plans with `name`, `monthlyPlanId`, optional `annualPlanId`, `limits`, and `freeTrial`
+- ✅ **Customer on sign-up**: Optional Razorpay customer creation when a user signs up, with `onCustomerCreate` and `getCustomerCreateParams`
+- ✅ **Webhook handling**: Subscription events (activated, cancelled, expired, etc.) with optional `onSubscriptionActivated`, `onSubscriptionCancel`, `onSubscriptionUpdate`, and global `onEvent`
+- ✅ **Authorization**: `authorizeReference` for list/create actions; `requireEmailVerification` for subscriptions
+- ✅ **Type safety**: Full TypeScript support with `SubscriptionRecord`, `RazorpayPlan`, and plugin options
+- ✅ **TanStack Query**: Works with TanStack Query; use our optional [pre-built hooks](#tanstack-query-hooks) or build your own hooks around `authClient.api` (GET/POST to the Razorpay endpoints).
 
 ## Installation
 
@@ -59,35 +60,45 @@ The package includes `razorpay` and `zod` as dependencies.
 
 ```typescript
 // src/lib/auth.ts (or your auth configuration file)
+import Razorpay from 'razorpay'
 import { betterAuth } from 'better-auth'
 import { razorpayPlugin } from 'better-auth-razorpay'
+
+const razorpayClient = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID!,
+  key_secret: process.env.RAZORPAY_KEY_SECRET!,
+})
 
 export const auth = betterAuth({
   // ... your Better Auth configuration
   database: mongodbAdapter(await connect()), // or your adapter
   secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL, // Optional if env var is set
+  baseURL: process.env.BETTER_AUTH_URL,
   
   plugins: [
     razorpayPlugin({
-      keyId: process.env.RAZORPAY_KEY_ID!,
-      keySecret: process.env.RAZORPAY_KEY_SECRET!,
-      webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
-      plans: [
-        'plan_1234567890', // Basic Plan
-        'plan_0987654321', // Premium Plan
-      ],
+      razorpayClient,
+      razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+      createCustomerOnSignUp: true, // optional
+      subscription: {
+        enabled: true,
+        plans: [
+          {
+            name: 'Starter',
+            monthlyPlanId: 'plan_xxxxxxxxxxxx',
+            annualPlanId: 'plan_yyyyyyyyyyyy', // optional
+            limits: { features: 5 },
+            freeTrial: { days: 7 }, // optional
+          },
+        ],
+        onSubscriptionActivated: async ({ subscription, plan }) => {
+          console.log(`Subscription ${subscription.id} activated for plan ${plan.name}`)
+        },
+      },
       onWebhookEvent: async (payload, context) => {
-        // Optional: Custom webhook event handling
         const { event, subscription, payment } = payload
-        const { userId, user } = context
-        
-        // Send emails, update external systems, analytics, etc.
-        if (event === 'subscription.charged') {
-          await sendPaymentConfirmationEmail(user.email, {
-            amount: payment?.amount,
-            subscriptionId: subscription.id,
-          })
+        if (event === 'subscription.charged' && payment) {
+          // Send confirmation email, etc.
         }
       },
     }),
@@ -145,21 +156,93 @@ npx @better-auth/cli@latest generate
 
 ```typescript
 interface RazorpayPluginOptions {
-  keyId: string                    // Required: Razorpay Key ID
-  keySecret: string                // Required: Razorpay Key Secret
-  webhookSecret?: string           // Optional: Webhook secret for signature verification
-  plans: string[]                  // Required: Array of plan IDs from Razorpay dashboard
-  onWebhookEvent?: OnWebhookEventCallback  // Optional: Custom webhook callback
+  razorpayClient: Razorpay         // Required: Initialized Razorpay instance (key_id, key_secret)
+  razorpayWebhookSecret?: string  // Optional: Webhook secret for signature verification
+  createCustomerOnSignUp?: boolean // Optional: Create Razorpay customer on user sign-up (default: false)
+  onCustomerCreate?: (args) => Promise<void>
+  getCustomerCreateParams?: (args) => Promise<{ params?: Record<string, unknown> }>
+  subscription?: SubscriptionOptions // Optional: { enabled, plans, callbacks, authorizeReference, ... }
+  onEvent?: (event) => Promise<void>
+  onWebhookEvent?: (payload, context) => Promise<void> // Optional: Custom webhook callback
 }
+```
+
+### Callback functions
+
+The plugin supports the same callback hooks as the [community plugin](https://github.com/iamjasonkendrick/better-auth-razorpay). You can use them for emails, analytics, external systems, or custom logic.
+
+| Callback | When it runs |
+|----------|----------------|
+| **`onCustomerCreate`** | After a Razorpay customer is created (when `createCustomerOnSignUp` is true and the user signs up). Receives `{ user, razorpayCustomer }`. |
+| **`getCustomerCreateParams`** | Before creating a Razorpay customer on sign-up. Return `{ params }` (e.g. `notes`) to add custom data to the customer. |
+| **`getSubscriptionCreateParams`** | Before creating a Razorpay subscription (create-or-update). Return `{ params }` (e.g. `notes`) to add custom data to the subscription. Receives `{ user, session, plan, subscription }`. |
+| **`authorizeReference`** | Before create-or-update and before listing subscriptions for a `referenceId` other than the current user. Return `true` to allow. Receives `{ user, referenceId, action }`. |
+| **`onSubscriptionCreated`** | After a new subscription is created (create-or-update). Receives `{ razorpaySubscription, subscription, plan }`. |
+| **`onSubscriptionActivated`** | When the webhook receives `subscription.activated`. Receives `{ event, razorpaySubscription, subscription, plan }`. |
+| **`onSubscriptionUpdate`** | When the webhook receives any other subscription event (e.g. `charged`, `paused`, `resumed`, `pending`, `halted`). Receives `{ event, subscription }`. |
+| **`onSubscriptionCancel`** | When the webhook receives `subscription.cancelled` or `subscription.expired`. Receives `{ event, razorpaySubscription, subscription }`. |
+| **`onEvent`** | After every processed webhook event. Receives the full event payload `{ event, ...payload }`. |
+| **`onWebhookEvent`** | Legacy: after webhook processing, with payload and user context. Receives `(payload, context)` where `context` has `userId` and `user`. |
+| **`freeTrial.onTrialStart`** | Optional, on a plan’s `freeTrial`. Call when you consider a subscription’s trial to have started (e.g. from your own logic or webhook handling). Receives `(subscription)`. |
+| **`freeTrial.onTrialEnd`** | Optional, on a plan’s `freeTrial`. Call when you consider a subscription’s trial to have ended. Receives `{ subscription }`. |
+
+Example: using callbacks in your config:
+
+```typescript
+razorpayPlugin({
+  razorpayClient,
+  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  createCustomerOnSignUp: true,
+  onCustomerCreate: async ({ user, razorpayCustomer }) => {
+    console.log(`Razorpay customer created for user ${user.id}: ${razorpayCustomer.id}`)
+  },
+  getCustomerCreateParams: async ({ user, session }) => ({
+    params: { notes: { internalUserId: user.id } },
+  }),
+  subscription: {
+    enabled: true,
+    plans: [
+      {
+        name: 'Starter',
+        monthlyPlanId: 'plan_xxx',
+        freeTrial: {
+          days: 7,
+          onTrialStart: async (subscription) => console.log('Trial started', subscription.id),
+          onTrialEnd: async ({ subscription }) => console.log('Trial ended', subscription.id),
+        },
+      },
+    ],
+    getSubscriptionCreateParams: async ({ user, plan, subscription }) => ({
+      params: { notes: { planName: plan.name } },
+    }),
+    onSubscriptionCreated: async ({ razorpaySubscription, subscription, plan }) => {
+      console.log(`Subscription ${subscription.id} created for plan ${plan.name}`)
+    },
+    onSubscriptionActivated: async ({ event, subscription, plan }) => {
+      console.log(`Subscription ${subscription.id} activated`)
+    },
+    onSubscriptionUpdate: async ({ event, subscription }) => {
+      console.log(`Subscription ${subscription.id} updated: ${event}`)
+    },
+    onSubscriptionCancel: async ({ event, subscription }) => {
+      console.log(`Subscription ${subscription.id} cancelled/expired: ${event}`)
+    },
+    authorizeReference: async ({ user, referenceId, action }) => user.id === referenceId,
+  },
+  onEvent: async (event) => console.log('Razorpay event:', event.event),
+  onWebhookEvent: async (payload, context) => {
+    // Custom logic: emails, analytics, etc.
+  },
+})
 ```
 
 ### User Fields (Plug-and-Play)
 
-The plugin extends the Better Auth user schema with subscription-related fields. When you add the plugin and run `npx @better-auth/cli@latest migrate` (or `generate`), these columns are added to your user table automatically:
+The plugin extends the Better Auth user schema with:
 
-- `subscriptionId`, `subscriptionPlanId`, `subscriptionStatus`, `subscriptionCurrentPeriodEnd`, `cancelAtPeriodEnd`, `lastPaymentDate`, `nextBillingDate`
+- **user**: `razorpayCustomerId` (optional) — set when `createCustomerOnSignUp` is true or when a customer is created for subscriptions.
 
-You do **not** need to add them manually to `user.additionalFields` unless you prefer to define them yourself.
+You do **not** need to add it manually to `user.additionalFields` unless you prefer to define it yourself.
 
 ## Database Setup
 
@@ -167,15 +250,12 @@ You do **not** need to add them manually to `user.additionalFields` unless you p
 
 The plugin automatically creates the following database models via Better Auth's schema system:
 
-**`razorpaySubscription`**
-- `userId` (string) - User ID
-- `subscriptionId` (string) - Razorpay subscription ID
-- `planId` (string) - Plan ID
-- `status` (string) - Subscription status
+**`user`** (extended)
+- `razorpayCustomerId` (string, optional) — Razorpay customer ID when customer creation is enabled.
 
-**`razorpayCustomer`** (for future use)
-- `userId` (string, unique) - User ID
-- `razorpayCustomerId` (string, unique) - Razorpay customer ID
+**`subscription`**
+- `id`, `plan`, `referenceId`, `razorpayCustomerId`, `razorpaySubscriptionId`, `status`, `trialStart`, `trialEnd`, `periodStart`, `periodEnd`, `cancelAtPeriodEnd`, `seats`, `groupId`, `createdAt`, `updatedAt`
+- `status` values: `created`, `active`, `pending`, `halted`, `cancelled`, `completed`, `expired`, `trialing`
 
 ### Database Adapters
 
@@ -190,11 +270,22 @@ The plugin works with all Better Auth database adapters:
 
 ## API Endpoints
 
-All endpoints are prefixed with `/api/auth/razorpay/` (or your configured `basePath`). Endpoints use Better Auth's `createAuthEndpoint` and automatically handle authentication via `sessionMiddleware` where required.
+All endpoints are prefixed with `/api/auth/razorpay/` (or your configured `basePath`).
+
+### Subscription flow
+
+| Action | Method | Endpoint | Description |
+|--------|--------|----------|-------------|
+| Create or update | `POST` | `subscription/create-or-update` | Start a subscription or update; returns `checkoutUrl` for Razorpay payment page. Body: `plan`, `annual?`, `seats?`, `subscriptionId?`, `successUrl?`, `disableRedirect?`. |
+| Cancel | `POST` | `subscription/cancel` | Cancel by local subscription ID. Body: `subscriptionId`, `immediately?`. |
+| Restore | `POST` | `subscription/restore` | Restore a subscription scheduled to cancel. Body: `subscriptionId`. |
+| List | `GET` | `subscription/list` | List active/trialing subscriptions. Query: `referenceId?` (default: current user). |
+| Get plans | `GET` | `get-plans` | Return configured plans (name, monthlyPlanId, annualPlanId, limits, freeTrial). |
+| Webhook | `POST` | `webhook` | Razorpay webhook URL; configure in Razorpay Dashboard. |
 
 ### 1. Get Plans
 
-Retrieve all configured subscription plans.
+Retrieve all configured subscription plans (from plugin config; no Razorpay API call).
 
 **Endpoint:** `GET /api/auth/razorpay/get-plans`
 
@@ -205,7 +296,7 @@ Retrieve all configured subscription plans.
 ```typescript
 {
   success: true,
-  data: RazorpayPlan[]
+  data: Array<{ name: string; monthlyPlanId: string; annualPlanId?: string; limits?: Record<string, number>; freeTrial?: { days: number } }>
 }
 ```
 
@@ -577,12 +668,11 @@ import { authClient } from '@/lib/auth-client'
 // GET request
 const plans = await authClient.api.get('/razorpay/get-plans')
 
-// POST request
-const subscription = await authClient.api.post('/razorpay/subscribe', {
-  body: {
-    plan_id: 'plan_1234567890',
-  },
+// POST request (create or update subscription)
+const result = await authClient.api.post('/razorpay/subscription/create-or-update', {
+  body: { plan: 'Starter', annual: false, seats: 1 },
 })
+// result.data.checkoutUrl -> redirect user to Razorpay payment page
 ```
 
 ### Type Safety
@@ -600,6 +690,120 @@ export const authClient = createAuthClient<typeof auth>({
 // Infer session type
 type Session = typeof authClient.$Infer.Session
 type User = typeof authClient.$Infer.Session.user
+```
+
+## TanStack Query Hooks
+
+The plugin works with **TanStack Query**: you can use it with `useQuery`/`useMutation` and `authClient.api` in any way you like. We provide optional pre-built hooks below; if you prefer a different setup, build your own hooks around the same endpoints (e.g. `authClient.api.get('/razorpay/get-plans')`, `authClient.api.post('/razorpay/subscription/create-or-update', { body })`, etc.).
+
+To use our pre-built hooks, install peer dependencies:
+
+```bash
+npm install @tanstack/react-query react
+# or yarn / pnpm / bun
+```
+
+Import from `better-auth-razorpay/hooks` and pass your Better Auth client as the first argument:
+
+```tsx
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createAuthClient } from 'better-auth/react'
+import { razorpayClientPlugin } from 'better-auth-razorpay/client'
+import {
+  usePlans,
+  useSubscriptions,
+  useCreateOrUpdateSubscription,
+  useCancelSubscription,
+  useRestoreSubscription,
+  razorpayQueryKeys,
+} from 'better-auth-razorpay/hooks'
+import type { CreateOrUpdateSubscriptionInput } from 'better-auth-razorpay/hooks'
+
+const queryClient = new QueryClient()
+// auth from your server config (e.g. import type { auth } from './auth')
+const authClient = createAuthClient<typeof auth>({
+  plugins: [razorpayClientPlugin()],
+})
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <SubscriptionUI />
+    </QueryClientProvider>
+  )
+}
+
+function SubscriptionUI() {
+  // Plans (no auth required)
+  const { data: plans, isLoading: plansLoading } = usePlans(authClient)
+
+  // Current user's subscriptions (requires session)
+  const { data: subscriptions, isLoading: subsLoading } = useSubscriptions(authClient)
+
+  const createOrUpdate = useCreateOrUpdateSubscription(authClient)
+  const cancel = useCancelSubscription(authClient)
+  const restore = useRestoreSubscription(authClient)
+
+  const handleSubscribe = () => {
+    createOrUpdate.mutate(
+      { plan: 'Starter', annual: false },
+      {
+        onSuccess: (data) => {
+          window.location.href = data.checkoutUrl // Redirect to Razorpay
+        },
+      }
+    )
+  }
+
+  const handleCancel = (subscriptionId: string) => {
+    cancel.mutate({ subscriptionId, immediately: false })
+  }
+
+  const handleRestore = (subscriptionId: string) => {
+    restore.mutate({ subscriptionId })
+  }
+
+  if (plansLoading) return <div>Loading plans...</div>
+  return (
+    <div>
+      {plans?.map((p) => (
+        <button key={p.name} onClick={handleSubscribe} disabled={createOrUpdate.isPending}>
+          Subscribe to {p.name}
+        </button>
+      ))}
+      {subscriptions?.map((s) => (
+        <div key={s.id}>
+          {s.plan} – {s.status}
+          {s.cancelAtPeriodEnd ? (
+            <button onClick={() => handleRestore(s.id)}>Restore</button>
+          ) : (
+            <button onClick={() => handleCancel(s.id)}>Cancel</button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+```
+
+### Hooks reference
+
+| Hook | Type | Description |
+|------|------|-------------|
+| `usePlans(client, options?)` | `useQuery` | Fetches configured plans (GET `/razorpay/get-plans`). |
+| `useSubscriptions(client, input?, options?)` | `useQuery` | Lists active/trialing subscriptions (GET `/razorpay/subscription/list`). Optional `referenceId` in input or options. |
+| `useCreateOrUpdateSubscription(client, options?)` | `useMutation` | Creates or updates subscription; returns `checkoutUrl`. Invalidates subscriptions list on success. |
+| `useCancelSubscription(client, options?)` | `useMutation` | Cancels by local subscription ID; optional `immediately`. Invalidates subscriptions list on success. |
+| `useRestoreSubscription(client, options?)` | `useMutation` | Restores a subscription scheduled to cancel. Invalidates subscriptions list on success. |
+
+**Query keys** (for manual invalidation or prefetching):
+
+```ts
+import { razorpayQueryKeys } from 'better-auth-razorpay/hooks'
+
+razorpayQueryKeys.plans()           // ['razorpay', 'plans']
+razorpayQueryKeys.subscriptions()   // ['razorpay', 'subscriptions', 'me']
+razorpayQueryKeys.subscriptions('user-id')  // ['razorpay', 'subscriptions', 'user-id']
 ```
 
 ## Webhook Setup
