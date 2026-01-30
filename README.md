@@ -4,6 +4,10 @@ A comprehensive subscription management plugin for Better Auth that integrates w
 
 > **📚 Always consult [better-auth.com/docs](https://better-auth.com/docs) for the latest Better Auth API and best practices.**
 
+## Credits
+
+This plugin is inspired by and aligned with the design of the [better-auth-razorpay](https://github.com/iamjasonkendrick/better-auth-razorpay) community plugin. Credit and thanks go to the original author **[Jason Kendrick](https://github.com/iamjasonkendrick)** ([@iamjasonkendrick](https://github.com/iamjasonkendrick)) for the subscription flow, callback API, and feature set that this implementation follows.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -19,6 +23,7 @@ A comprehensive subscription management plugin for Better Auth that integrates w
 - [Usage Examples](#usage-examples)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
+- [Credits](#credits)
 
 ## Overview
 
