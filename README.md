@@ -1198,5 +1198,4 @@ For issues, questions, or contributions:
 ## License
 
 This plugin is part of the Better Auth ecosystem and follows the same license as Better Auth.
-#   b e t t e r - a u t h - r a z o r p a y  
- 
+
