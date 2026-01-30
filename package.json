@@ -1,0 +1,58 @@
+{
+  "name": "better-auth-razorpay",
+  "version": "1.0.0",
+  "description": "Better Auth plugin for Razorpay subscriptions and payments",
+  "type": "module",
+  "main": "./index.ts",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./index.ts",
+      "default": "./index.ts"
+    },
+    "./client": {
+      "types": "./client.ts",
+      "import": "./client.ts",
+      "default": "./client.ts"
+    }
+  },
+  "files": [
+    "index.ts",
+    "client.ts",
+    "api",
+    "lib",
+    "README.md",
+    "RAZORPAY_PLUGIN.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck"
+  },
+  "keywords": [
+    "better-auth",
+    "razorpay",
+    "plugin",
+    "subscriptions",
+    "payments",
+    "authentication"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/better-auth-razorpay.git"
+  },
+  "peerDependencies": {
+    "better-auth": "^1.0.0"
+  },
+  "dependencies": {
+    "razorpay": "^2.9.2",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
