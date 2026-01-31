@@ -75,6 +75,7 @@ export interface RazorpayPlan {
   name: string
   monthlyPlanId: string
   annualPlanId?: string
+  description?: string
   limits?: PlanLimits
   freeTrial?: PlanFreeTrial
 }

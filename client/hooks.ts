@@ -63,13 +63,13 @@ async function fetchSubscriptions(
   const res = client.razorpay
     ? await client.razorpay.listSubscriptions(input)
     : (() => {
-        const query: Record<string, string> = {}
-        if (input?.referenceId) query.referenceId = input.referenceId
-        const path = `${BASE}/subscription/list`
-        return Object.keys(query).length > 0
-          ? client.api.get(path, { query })
-          : client.api.get(path)
-      })()
+      const query: Record<string, string> = {}
+      if (input?.referenceId) query.referenceId = input.referenceId
+      const path = `${BASE}/subscription/list`
+      return Object.keys(query).length > 0
+        ? client.api.get(path, { query })
+        : client.api.get(path)
+    })()
   assertSuccess<ListSubscriptionsResponse['data']>(res)
   return res.data
 }
@@ -82,8 +82,8 @@ async function createOrUpdateSubscription(
   const res = client.razorpay
     ? await client.razorpay.createOrUpdateSubscription(input)
     : await client.api.post(`${BASE}/subscription/create-or-update`, {
-        body: input as unknown as Record<string, unknown>,
-      })
+      body: input as unknown as Record<string, unknown>,
+    })
   assertSuccess<CreateOrUpdateSubscriptionResponse['data']>(res)
   return res.data
 }
@@ -96,8 +96,8 @@ async function cancelSubscription(
   const res = client.razorpay
     ? await client.razorpay.cancelSubscription(input)
     : await client.api.post(`${BASE}/subscription/cancel`, {
-        body: input as unknown as Record<string, unknown>,
-      })
+      body: input as unknown as Record<string, unknown>,
+    })
   assertSuccess<CancelSubscriptionResponse['data']>(res)
   return res.data
 }
@@ -110,8 +110,8 @@ async function restoreSubscription(
   const res = client.razorpay
     ? await client.razorpay.restoreSubscription(input)
     : await client.api.post(`${BASE}/subscription/restore`, {
-        body: input as unknown as Record<string, unknown>,
-      })
+      body: input as unknown as Record<string, unknown>,
+    })
   assertSuccess<RestoreSubscriptionResponse['data']>(res)
   return res.data
 }
@@ -124,8 +124,8 @@ async function verifyPayment(
   const res = client.razorpay
     ? await client.razorpay.verifyPayment(input)
     : await client.api.post(`${BASE}/verify-payment`, {
-        body: input as unknown as Record<string, unknown>,
-      })
+      body: input as unknown as Record<string, unknown>,
+    })
   assertSuccess<VerifyPaymentResponse['data']>(res)
   return res.data
 }
