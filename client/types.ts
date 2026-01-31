@@ -106,3 +106,20 @@ export interface RestoreSubscriptionInput {
 export interface ListSubscriptionsInput {
   referenceId?: string
 }
+
+/** Input for verify-payment (Razorpay checkout success callback payload). */
+export interface VerifyPaymentInput {
+  razorpay_payment_id: string
+  razorpay_subscription_id: string
+  razorpay_signature: string
+}
+
+/** Response shape for verify-payment (success). */
+export interface VerifyPaymentResponse {
+  success: true
+  data: {
+    message: string
+    payment_id: string
+    subscription_id: string
+  }
+}

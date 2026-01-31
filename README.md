@@ -84,6 +84,7 @@ export const auth = betterAuth({
     razorpayPlugin({
       razorpayClient,
       razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+      razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET, // optional: enables verify-payment endpoint
       createCustomerOnSignUp: true, // optional
       subscription: {
         enabled: true,
@@ -141,6 +142,7 @@ BETTER_AUTH_URL=https://yourdomain.com
 RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
 RAZORPAY_KEY_SECRET=your_secret_key
 RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+# Pass RAZORPAY_KEY_SECRET as razorpayKeySecret in plugin options to enable the verify-payment endpoint (same as client key, not webhook secret).
 ```
 
 5. **Run Database Migration**
@@ -163,6 +165,7 @@ npx @better-auth/cli@latest generate
 interface RazorpayPluginOptions {
   razorpayClient: Razorpay         // Required: Initialized Razorpay instance (key_id, key_secret)
   razorpayWebhookSecret?: string  // Optional: Webhook secret for signature verification
+  razorpayKeySecret?: string      // Optional: API key secret for payment signature verification; when set, enables POST /razorpay/verify-payment (same secret as Razorpay client, not webhook secret)
   createCustomerOnSignUp?: boolean // Optional: Create Razorpay customer on user sign-up (default: false)
   onCustomerCreate?: (args) => Promise<void>
   getCustomerCreateParams?: (args) => Promise<{ params?: Record<string, unknown> }>
@@ -197,6 +200,7 @@ Example: using callbacks in your config:
 razorpayPlugin({
   razorpayClient,
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET, // optional: enables verify-payment endpoint
   createCustomerOnSignUp: true,
   onCustomerCreate: async ({ user, razorpayCustomer }) => {
     console.log(`Razorpay customer created for user ${user.id}: ${razorpayCustomer.id}`)
@@ -429,7 +433,7 @@ if (response.success && response.data) {
 
 ### 4. Verify Payment
 
-Verify payment signature after Razorpay checkout completion.
+Verify payment signature after Razorpay checkout completion. This endpoint is **only registered when `razorpayKeySecret`** is set in plugin options. Use the same API key secret as your Razorpay client (not the webhook secret).
 
 **Endpoint:** `POST /api/auth/razorpay/verify-payment`
 
@@ -484,6 +488,7 @@ const handlePaymentSuccess = async (razorpayResponse: {
 - `SIGNATURE_VERIFICATION_FAILED` - Invalid payment signature
 - `UNAUTHORIZED` - User not authenticated
 - `SUBSCRIPTION_NOT_FOUND` - Subscription record not found
+- `FORBIDDEN` - Subscription does not belong to authenticated user
 
 ---
 

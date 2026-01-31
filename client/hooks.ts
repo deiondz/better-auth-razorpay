@@ -17,11 +17,13 @@ import type {
   CancelSubscriptionInput,
   RestoreSubscriptionInput,
   ListSubscriptionsInput,
+  VerifyPaymentInput,
   GetPlansResponse,
   ListSubscriptionsResponse,
   CreateOrUpdateSubscriptionResponse,
   CancelSubscriptionResponse,
   RestoreSubscriptionResponse,
+  VerifyPaymentResponse,
   RazorpayApiError,
 } from './types'
 
@@ -100,6 +102,18 @@ async function restoreSubscription(
     body: input as unknown as Record<string, unknown>,
   })
   assertSuccess<RestoreSubscriptionResponse['data']>(res)
+  return res.data
+}
+
+/** Verify payment (POST /razorpay/verify-payment). */
+async function verifyPayment(
+  client: RazorpayAuthClient,
+  input: VerifyPaymentInput
+): Promise<VerifyPaymentResponse['data']> {
+  const res = await client.api.post(`${BASE}/verify-payment`, {
+    body: input as unknown as Record<string, unknown>,
+  })
+  assertSuccess<VerifyPaymentResponse['data']>(res)
   return res.data
 }
 
@@ -219,11 +233,13 @@ export type {
   CancelSubscriptionInput,
   RestoreSubscriptionInput,
   ListSubscriptionsInput,
+  VerifyPaymentInput,
   GetPlansResponse,
   ListSubscriptionsResponse,
   CreateOrUpdateSubscriptionResponse,
   CancelSubscriptionResponse,
   RestoreSubscriptionResponse,
+  VerifyPaymentResponse,
   RazorpayApiError,
   RazorpayApiResult,
 } from './types'
@@ -239,6 +255,33 @@ export function useRestoreSubscription(
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: RestoreSubscriptionInput) => restoreSubscription(client!, input),
+    ...options,
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })
+      options?.onSuccess?.(data, variables, onMutateResult, context)
+    },
+  })
+}
+
+export type UseVerifyPaymentOptions = UseMutationOptions<
+  VerifyPaymentResponse['data'],
+  Error,
+  VerifyPaymentInput,
+  unknown
+>
+
+/**
+ * Verify payment signature after Razorpay checkout success.
+ * Call with the payload from the Razorpay success handler (razorpay_payment_id, razorpay_subscription_id, razorpay_signature).
+ * Invalidates subscriptions list on success.
+ */
+export function useVerifyPayment(
+  client: RazorpayAuthClient | null | undefined,
+  options?: UseVerifyPaymentOptions
+) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: VerifyPaymentInput) => verifyPayment(client!, input),
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
       queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })

@@ -5,6 +5,7 @@ import {
   getPlans,
   listSubscriptions,
   restoreSubscription,
+  verifyPayment,
   webhook,
 } from './api'
 import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
@@ -21,6 +22,7 @@ import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
  * @param options - Plugin configuration
  * @param options.razorpayClient - Initialized Razorpay instance (key_id, key_secret)
  * @param options.razorpayWebhookSecret - Webhook secret for signature verification
+ * @param options.razorpayKeySecret - API key secret for payment signature verification (optional; when set, enables POST /razorpay/verify-payment)
  * @param options.createCustomerOnSignUp - Create Razorpay customer when user signs up (default: false)
  * @param options.onCustomerCreate - Callback after customer is created
  * @param options.getCustomerCreateParams - Custom params when creating customer
@@ -31,6 +33,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
   const {
     razorpayClient,
     razorpayWebhookSecret,
+    razorpayKeySecret,
     createCustomerOnSignUp = false,
     onCustomerCreate,
     getCustomerCreateParams,
@@ -83,6 +86,9 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
       'subscription/restore': restoreSubscription(razorpay),
       'subscription/list': listSubscriptions({ subscription: subOpts }),
       'get-plans': getPlans({ subscription: subOpts }),
+      ...(razorpayKeySecret
+        ? { 'verify-payment': verifyPayment(razorpayKeySecret) }
+        : {}),
       webhook: webhook(razorpayWebhookSecret, options.onWebhookEvent ?? undefined, {
         subscription: subOpts,
         onEvent,

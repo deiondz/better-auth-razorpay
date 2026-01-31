@@ -169,6 +169,8 @@ export interface RazorpayPluginOptions {
   razorpayClient: import('razorpay')
   /** Webhook secret for signature verification. */
   razorpayWebhookSecret?: string
+  /** API key secret for payment signature verification. When set, enables POST /razorpay/verify-payment (same secret as Razorpay client, not webhook secret). */
+  razorpayKeySecret?: string
   /** Create Razorpay customer when user signs up. Default: false. */
   createCustomerOnSignUp?: boolean
   /** Called after a Razorpay customer is created. */
