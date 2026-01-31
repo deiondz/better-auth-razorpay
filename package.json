@@ -1,6 +1,6 @@
 {
   "name": "@deiondz/better-auth-razorpay",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Better Auth plugin for Razorpay subscriptions and payments",
   "type": "module",
   "main": "./index.ts",
