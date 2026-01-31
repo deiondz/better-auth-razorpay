@@ -56,21 +56,34 @@ function handleRazorpayError(error: unknown): {
       }
     }
 
-    // Handle Razorpay error format: { error: { code: string, description: string } }
-    if ('error' in errorObj) {
-      const razorpayError = errorObj as {
-        error?: { code?: string; description?: string; field?: string }
+    // Razorpay SDK (axios) may put API error in response.data; normalize to same shape
+    const axiosData = (errorObj as { response?: { data?: { error?: unknown } } }).response?.data
+    const directError = 'error' in errorObj ? (errorObj as { error: unknown }).error : null
+    const razorpayPayload = axiosData?.error ?? directError
+
+    // Handle Razorpay error format: { error: { code, description?, field?, reason?, step? } }
+    if (razorpayPayload && typeof razorpayPayload === 'object') {
+      const rp = razorpayPayload as {
+        code?: string
+        description?: string
+        field?: string
+        reason?: string
+        step?: string
       }
+      const code = rp?.code && String(rp.code).trim() ? rp.code : 'RAZORPAY_ERROR'
+      const desc = rp?.description && String(rp.description).trim()
+      const field = rp?.field != null && String(rp.field).trim() ? rp.field : null
+      const reason = rp?.reason && String(rp.reason).trim() ? rp.reason : null
+      const step = rp?.step && String(rp.step).trim() ? rp.step : null
+      const description =
+        desc ||
+        (field ? `Razorpay error: ${field}` : null) ||
+        (reason ? `Razorpay: ${reason}` : null) ||
+        (step ? `Razorpay error at step: ${step}` : null) ||
+        'Razorpay request failed'
       return {
         success: false,
-        error: {
-          code: razorpayError.error?.code || 'RAZORPAY_ERROR',
-          description:
-            razorpayError.error?.description ||
-            razorpayError.error?.field
-              ? `Razorpay error: ${razorpayError.error.field}`
-              : 'Razorpay request failed',
-        },
+        error: { code, description },
       }
     }
 
