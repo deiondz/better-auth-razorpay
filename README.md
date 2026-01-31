@@ -50,13 +50,13 @@ The Razorpay plugin provides a subscription management solution aligned with the
 1. **Install the Package**
 
 ```bash
-npm install better-auth-razorpay
+npm install @deiondz/better-auth-razorpay
 # or
-yarn add better-auth-razorpay
+yarn add @deiondz/better-auth-razorpay
 # or
-pnpm add better-auth-razorpay
+pnpm add @deiondz/better-auth-razorpay
 # or
-bun add better-auth-razorpay
+bun add @deiondz/better-auth-razorpay
 ```
 
 The package includes `razorpay` and `zod` as dependencies.
@@ -67,7 +67,7 @@ The package includes `razorpay` and `zod` as dependencies.
 // src/lib/auth.ts (or your auth configuration file)
 import Razorpay from 'razorpay'
 import { betterAuth } from 'better-auth'
-import { razorpayPlugin } from 'better-auth-razorpay'
+import { razorpayPlugin } from '@deiondz/better-auth-razorpay'
 
 const razorpayClient = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID!,
@@ -116,7 +116,7 @@ export const auth = betterAuth({
 ```typescript
 // src/lib/auth-client.ts
 import { createAuthClient } from 'better-auth/react'
-import { razorpayClientPlugin } from 'better-auth-razorpay/client'
+import { razorpayClientPlugin } from '@deiondz/better-auth-razorpay/client'
 import type { auth } from './auth'
 
 export const authClient = createAuthClient<typeof auth>({
@@ -708,12 +708,12 @@ npm install @tanstack/react-query react
 # or yarn / pnpm / bun
 ```
 
-Import from `better-auth-razorpay/hooks` and pass your Better Auth client as the first argument:
+Import from `@deiondz/better-auth-razorpay/hooks` and pass your Better Auth client as the first argument:
 
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAuthClient } from 'better-auth/react'
-import { razorpayClientPlugin } from 'better-auth-razorpay/client'
+import { razorpayClientPlugin } from '@deiondz/better-auth-razorpay/client'
 import {
   usePlans,
   useSubscriptions,
@@ -721,8 +721,8 @@ import {
   useCancelSubscription,
   useRestoreSubscription,
   razorpayQueryKeys,
-} from 'better-auth-razorpay/hooks'
-import type { CreateOrUpdateSubscriptionInput } from 'better-auth-razorpay/hooks'
+} from '@deiondz/better-auth-razorpay/hooks'
+import type { CreateOrUpdateSubscriptionInput } from '@deiondz/better-auth-razorpay/hooks'
 
 const queryClient = new QueryClient()
 // auth from your server config (e.g. import type { auth } from './auth')
@@ -804,7 +804,7 @@ function SubscriptionUI() {
 **Query keys** (for manual invalidation or prefetching):
 
 ```ts
-import { razorpayQueryKeys } from 'better-auth-razorpay/hooks'
+import { razorpayQueryKeys } from '@deiondz/better-auth-razorpay/hooks'
 
 razorpayQueryKeys.plans()           // ['razorpay', 'plans']
 razorpayQueryKeys.subscriptions()   // ['razorpay', 'subscriptions', 'me']
@@ -888,7 +888,7 @@ import type {
   RazorpayErrorResponse,
   RazorpayPluginOptions,
   OnWebhookEventCallback,
-} from 'better-auth-razorpay'
+} from '@deiondz/better-auth-razorpay'
 ```
 
 ### Response Types
@@ -1385,7 +1385,7 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
 
 **7. Type Errors**
 - Ensure you're using `createAuthClient<typeof auth>()` for type inference
-- Import types from `better-auth-razorpay`
+- Import types from `@deiondz/better-auth-razorpay`
 - Check that plugin is properly exported
 
 ## Resources
