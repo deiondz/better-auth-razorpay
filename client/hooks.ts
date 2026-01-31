@@ -1,8 +1,9 @@
 /**
  * React hooks for Razorpay subscription features using TanStack Query.
- * Use with your Better Auth client: usePlans(authClient), useSubscriptions(authClient), etc.
+ * Wrap your app with <RazorpayAuthProvider client={authClient}> and use usePlans(), useSubscriptions(), etc. with no client argument.
  */
 
+import { createContext, useContext, createElement, type ReactNode } from 'react'
 import {
   useQuery,
   useMutation,
@@ -29,6 +30,37 @@ import type {
 
 const BASE = '/razorpay'
 
+const RAZORPAY_NO_CLIENT_MESSAGE =
+  'Razorpay hooks require wrapping your app with <RazorpayAuthProvider client={authClient}>.'
+
+const RAZORPAY_NO_RAZORPAY_OR_API_MESSAGE =
+  'Razorpay hooks require a client created with razorpayClientPlugin() in createAuthClient({ plugins: [...] }).'
+
+/** Context holding the Razorpay-capable auth client. Default is null. */
+export const RazorpayAuthContext = createContext<RazorpayAuthClient | null>(null)
+
+/** Provider that supplies the auth client to Razorpay hooks. Wrap your app once with client={authClient}. */
+export function RazorpayAuthProvider({
+  client,
+  children,
+}: {
+  client: RazorpayAuthClient | null
+  children: ReactNode
+}) {
+  return createElement(RazorpayAuthContext.Provider, { value: client }, children)
+}
+
+/** Returns the Razorpay-capable auth client from context, or null if not wrapped with RazorpayAuthProvider. */
+export function useRazorpayAuthClient(): RazorpayAuthClient | null {
+  return useContext(RazorpayAuthContext)
+}
+
+function requireRazorpayOrApi(client: RazorpayAuthClient): void {
+  if (!client.razorpay && !client.api) {
+    throw new Error(RAZORPAY_NO_RAZORPAY_OR_API_MESSAGE)
+  }
+}
+
 /** Query keys for cache invalidation. */
 export const razorpayQueryKeys = {
   all: ['razorpay'] as const,
@@ -48,9 +80,10 @@ function assertSuccess<T>(res: unknown): asserts res is { success: true; data: T
 
 /** Fetch plans (GET /razorpay/get-plans). Prefers client.razorpay when available to avoid 404s. */
 async function fetchPlans(client: RazorpayAuthClient): Promise<PlanSummary[]> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.getPlans()
-    : await client.api.get(`${BASE}/get-plans`)
+    : await client.api!.get(`${BASE}/get-plans`)
   assertSuccess<PlanSummary[]>(res)
   return res.data
 }
@@ -60,6 +93,7 @@ async function fetchSubscriptions(
   client: RazorpayAuthClient,
   input?: ListSubscriptionsInput
 ): Promise<ListSubscriptionsResponse['data']> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.listSubscriptions(input)
     : (() => {
@@ -67,8 +101,8 @@ async function fetchSubscriptions(
       if (input?.referenceId) query.referenceId = input.referenceId
       const path = `${BASE}/subscription/list`
       return Object.keys(query).length > 0
-        ? client.api.get(path, { query })
-        : client.api.get(path)
+        ? client.api!.get(path, { query })
+        : client.api!.get(path)
     })()
   assertSuccess<ListSubscriptionsResponse['data']>(res)
   return res.data
@@ -79,9 +113,10 @@ async function createOrUpdateSubscription(
   client: RazorpayAuthClient,
   input: CreateOrUpdateSubscriptionInput
 ): Promise<CreateOrUpdateSubscriptionResponse['data']> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.createOrUpdateSubscription(input)
-    : await client.api.post(`${BASE}/subscription/create-or-update`, {
+    : await client.api!.post(`${BASE}/subscription/create-or-update`, {
       body: input as unknown as Record<string, unknown>,
     })
   assertSuccess<CreateOrUpdateSubscriptionResponse['data']>(res)
@@ -93,9 +128,10 @@ async function cancelSubscription(
   client: RazorpayAuthClient,
   input: CancelSubscriptionInput
 ): Promise<CancelSubscriptionResponse['data']> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.cancelSubscription(input)
-    : await client.api.post(`${BASE}/subscription/cancel`, {
+    : await client.api!.post(`${BASE}/subscription/cancel`, {
       body: input as unknown as Record<string, unknown>,
     })
   assertSuccess<CancelSubscriptionResponse['data']>(res)
@@ -107,9 +143,10 @@ async function restoreSubscription(
   client: RazorpayAuthClient,
   input: RestoreSubscriptionInput
 ): Promise<RestoreSubscriptionResponse['data']> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.restoreSubscription(input)
-    : await client.api.post(`${BASE}/subscription/restore`, {
+    : await client.api!.post(`${BASE}/subscription/restore`, {
       body: input as unknown as Record<string, unknown>,
     })
   assertSuccess<RestoreSubscriptionResponse['data']>(res)
@@ -121,9 +158,10 @@ async function verifyPayment(
   client: RazorpayAuthClient,
   input: VerifyPaymentInput
 ): Promise<VerifyPaymentResponse['data']> {
+  requireRazorpayOrApi(client)
   const res = client.razorpay
     ? await client.razorpay.verifyPayment(input)
-    : await client.api.post(`${BASE}/verify-payment`, {
+    : await client.api!.post(`${BASE}/verify-payment`, {
       body: input as unknown as Record<string, unknown>,
     })
   assertSuccess<VerifyPaymentResponse['data']>(res)
@@ -137,11 +175,10 @@ export type UsePlansOptions = Omit<
 
 /**
  * Fetch configured subscription plans (no auth required).
+ * Requires RazorpayAuthProvider above in the tree.
  */
-export function usePlans(
-  client: RazorpayAuthClient | null | undefined,
-  options?: UsePlansOptions
-) {
+export function usePlans(options?: UsePlansOptions) {
+  const client = useRazorpayAuthClient()
   return useQuery({
     queryKey: razorpayQueryKeys.plans(),
     queryFn: () => fetchPlans(client!),
@@ -162,12 +199,13 @@ export type UseSubscriptionsOptions = Omit<
 
 /**
  * List active/trialing subscriptions for the current user (or referenceId).
+ * Requires RazorpayAuthProvider above in the tree.
  */
 export function useSubscriptions(
-  client: RazorpayAuthClient | null | undefined,
   input?: ListSubscriptionsInput,
   options?: UseSubscriptionsOptions
 ) {
+  const client = useRazorpayAuthClient()
   const { referenceId, ...queryOptions } = options ?? {}
   const refId = input?.referenceId ?? referenceId
   return useQuery({
@@ -188,15 +226,18 @@ export type UseCreateOrUpdateSubscriptionOptions = UseMutationOptions<
 /**
  * Create or update a subscription. Returns checkoutUrl for Razorpay payment page.
  * Invalidates subscriptions list on success.
+ * Requires RazorpayAuthProvider above in the tree.
  */
 export function useCreateOrUpdateSubscription(
-  client: RazorpayAuthClient | null | undefined,
   options?: UseCreateOrUpdateSubscriptionOptions
 ) {
+  const client = useRazorpayAuthClient()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: CreateOrUpdateSubscriptionInput) =>
-      createOrUpdateSubscription(client!, input),
+    mutationFn: (input: CreateOrUpdateSubscriptionInput) => {
+      if (!client) throw new Error(RAZORPAY_NO_CLIENT_MESSAGE)
+      return createOrUpdateSubscription(client, input)
+    },
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
       queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })
@@ -215,14 +256,16 @@ export type UseCancelSubscriptionOptions = UseMutationOptions<
 /**
  * Cancel a subscription by local subscription ID (at period end or immediately).
  * Invalidates subscriptions list on success.
+ * Requires RazorpayAuthProvider above in the tree.
  */
-export function useCancelSubscription(
-  client: RazorpayAuthClient | null | undefined,
-  options?: UseCancelSubscriptionOptions
-) {
+export function useCancelSubscription(options?: UseCancelSubscriptionOptions) {
+  const client = useRazorpayAuthClient()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: CancelSubscriptionInput) => cancelSubscription(client!, input),
+    mutationFn: (input: CancelSubscriptionInput) => {
+      if (!client) throw new Error(RAZORPAY_NO_CLIENT_MESSAGE)
+      return cancelSubscription(client, input)
+    },
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
       queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })
@@ -261,14 +304,16 @@ export type {
 /**
  * Restore a subscription that was scheduled to cancel at period end.
  * Invalidates subscriptions list on success.
+ * Requires RazorpayAuthProvider above in the tree.
  */
-export function useRestoreSubscription(
-  client: RazorpayAuthClient | null | undefined,
-  options?: UseRestoreSubscriptionOptions
-) {
+export function useRestoreSubscription(options?: UseRestoreSubscriptionOptions) {
+  const client = useRazorpayAuthClient()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: RestoreSubscriptionInput) => restoreSubscription(client!, input),
+    mutationFn: (input: RestoreSubscriptionInput) => {
+      if (!client) throw new Error(RAZORPAY_NO_CLIENT_MESSAGE)
+      return restoreSubscription(client, input)
+    },
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
       queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })
@@ -288,14 +333,16 @@ export type UseVerifyPaymentOptions = UseMutationOptions<
  * Verify payment signature after Razorpay checkout success.
  * Call with the payload from the Razorpay success handler (razorpay_payment_id, razorpay_subscription_id, razorpay_signature).
  * Invalidates subscriptions list on success.
+ * Requires RazorpayAuthProvider above in the tree.
  */
-export function useVerifyPayment(
-  client: RazorpayAuthClient | null | undefined,
-  options?: UseVerifyPaymentOptions
-) {
+export function useVerifyPayment(options?: UseVerifyPaymentOptions) {
+  const client = useRazorpayAuthClient()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: VerifyPaymentInput) => verifyPayment(client!, input),
+    mutationFn: (input: VerifyPaymentInput) => {
+      if (!client) throw new Error(RAZORPAY_NO_CLIENT_MESSAGE)
+      return verifyPayment(client, input)
+    },
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
       queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })

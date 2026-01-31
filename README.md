@@ -725,7 +725,7 @@ type User = typeof authClient.$Infer.Session.user
 
 ## TanStack Query Hooks
 
-The plugin works with **TanStack Query**. We provide optional pre-built hooks that accept your auth client; when you use `razorpayClientPlugin()`, the hooks call `authClient.razorpay.*` so requests hit the correct paths. If you prefer a different setup, use `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., or build your own hooks around those methods.
+The plugin works with **TanStack Query**. We provide optional pre-built hooks that get the auth client from React context; wrap your app once with **`<RazorpayAuthProvider client={authClient}>`** and use **`usePlans()`**, **`useSubscriptions()`**, etc. with **no client argument**. When you use `razorpayClientPlugin()`, the hooks call `authClient.razorpay.*` so requests hit the correct paths. If you prefer a different setup, use `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., or build your own hooks around those methods.
 
 To use our pre-built hooks, install peer dependencies:
 
@@ -734,13 +734,14 @@ npm install @tanstack/react-query react
 # or yarn / pnpm / bun
 ```
 
-Import from `@deiondz/better-auth-razorpay/hooks` and pass your Better Auth client as the first argument:
+Import from `@deiondz/better-auth-razorpay/hooks` and wrap your app with **`RazorpayAuthProvider`** so hooks can read the client from context:
 
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createAuthClient } from 'better-auth/react'
 import { razorpayClientPlugin } from '@deiondz/better-auth-razorpay/client'
 import {
+  RazorpayAuthProvider,
   usePlans,
   useSubscriptions,
   useCreateOrUpdateSubscription,
@@ -759,21 +760,23 @@ const authClient = createAuthClient<typeof auth>({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <SubscriptionUI />
+      <RazorpayAuthProvider client={authClient}>
+        <SubscriptionUI />
+      </RazorpayAuthProvider>
     </QueryClientProvider>
   )
 }
 
 function SubscriptionUI() {
   // Plans (no auth required)
-  const { data: plans, isLoading: plansLoading } = usePlans(authClient)
+  const { data: plans, isLoading: plansLoading } = usePlans()
 
   // Current user's subscriptions (requires session)
-  const { data: subscriptions, isLoading: subsLoading } = useSubscriptions(authClient)
+  const { data: subscriptions, isLoading: subsLoading } = useSubscriptions()
 
-  const createOrUpdate = useCreateOrUpdateSubscription(authClient)
-  const cancel = useCancelSubscription(authClient)
-  const restore = useRestoreSubscription(authClient)
+  const createOrUpdate = useCreateOrUpdateSubscription()
+  const cancel = useCancelSubscription()
+  const restore = useRestoreSubscription()
 
   const handleSubscribe = () => {
     createOrUpdate.mutate(
@@ -821,11 +824,11 @@ function SubscriptionUI() {
 
 | Hook | Type | Description |
 |------|------|-------------|
-| `usePlans(client, options?)` | `useQuery` | Fetches configured plans (GET `/razorpay/get-plans`). |
-| `useSubscriptions(client, input?, options?)` | `useQuery` | Lists active/trialing subscriptions (GET `/razorpay/subscription/list`). Optional `referenceId` in input or options. |
-| `useCreateOrUpdateSubscription(client, options?)` | `useMutation` | Creates or updates subscription; returns `checkoutUrl`. Invalidates subscriptions list on success. |
-| `useCancelSubscription(client, options?)` | `useMutation` | Cancels by local subscription ID; optional `immediately`. Invalidates subscriptions list on success. |
-| `useRestoreSubscription(client, options?)` | `useMutation` | Restores a subscription scheduled to cancel. Invalidates subscriptions list on success. |
+| `usePlans(options?)` | `useQuery` | Fetches configured plans (GET `/razorpay/get-plans`). Requires `RazorpayAuthProvider` above in the tree. |
+| `useSubscriptions(input?, options?)` | `useQuery` | Lists active/trialing subscriptions (GET `/razorpay/subscription/list`). Optional `referenceId` in input or options. Requires `RazorpayAuthProvider`. |
+| `useCreateOrUpdateSubscription(options?)` | `useMutation` | Creates or updates subscription; returns `checkoutUrl`. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
+| `useCancelSubscription(options?)` | `useMutation` | Cancels by local subscription ID; optional `immediately`. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
+| `useRestoreSubscription(options?)` | `useMutation` | Restores a subscription scheduled to cancel. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
 
 **Query keys** (for manual invalidation or prefetching):
 
@@ -1381,7 +1384,10 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
 **1. "POST /api/auth/api/get 404" or Razorpay requests returning 404**
 - Add the **client plugin** to your auth client: `createAuthClient({ plugins: [razorpayClientPlugin(), ...] })`
 - Use **method-based API** instead of `authClient.api.get/post`: call `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., so requests use the plugin’s route map and hit the correct paths
-- The TanStack hooks (`usePlans`, `useSubscriptions`, etc.) use `authClient.razorpay` when present, so they work correctly once the client plugin is added
+- Wrap your app with **`<RazorpayAuthProvider client={authClient}>`** so hooks get the client from context; use **`usePlans()`**, **`useSubscriptions()`**, etc. with no client argument
+- The TanStack hooks use `authClient.razorpay` when present, so they work correctly once the client plugin is added
+
+**For maintainers:** See [Razorpay plugin × Better Auth client (problem and solution)](docs/BETTER_AUTH_CLIENT_CONTEXT.md) for the 404/TypeScript root cause and plugin-side fixes.
 
 **2. "Plan not found in configured plans"**
 - Ensure the plan ID exists in Razorpay dashboard

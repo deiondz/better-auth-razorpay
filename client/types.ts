@@ -91,10 +91,14 @@ export interface RazorpayClientActions {
 
 /**
  * Minimal auth client interface for Razorpay hooks.
- * When using the client plugin (razorpayClientPlugin()), authClient.razorpay is set and hooks use it so requests hit the correct paths (avoids 404s from api.get/post).
+ * Primary: razorpay is set when razorpayClientPlugin() is used in createAuthClient({ plugins: [...] }); prefer it so requests hit the correct paths.
+ * Fallback: api is optional for custom clients that implement path-based api.get/api.post.
  */
 export interface RazorpayAuthClient {
-  api: {
+  /** Set when razorpayClientPlugin() is used in createAuthClient({ plugins: [razorpayClientPlugin()] }). Prefer these methods over api.get/post. */
+  razorpay?: RazorpayClientActions
+  /** Optional; for custom clients that implement path-based api.get/post. */
+  api?: {
     get: (
       path: string,
       options?: { query?: Record<string, string> }
@@ -104,8 +108,6 @@ export interface RazorpayAuthClient {
       options?: { body?: Record<string, unknown> }
     ) => Promise<RazorpayApiResult<unknown>>
   }
-  /** Set when razorpayClientPlugin() is used in createAuthClient({ plugins: [razorpayClientPlugin()] }). Prefer these methods over api.get/post. */
-  razorpay?: RazorpayClientActions
 }
 
 /** Input for create-or-update subscription. */
