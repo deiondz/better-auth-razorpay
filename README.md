@@ -112,7 +112,9 @@ export const auth = betterAuth({
 })
 ```
 
-3. **Add Client Plugin**
+3. **Add Client Plugin (required to avoid 404s)**
+
+Add the Razorpay client plugin so requests use the correct paths. **Without it, calls like `authClient.api.get('/razorpay/get-plans')` can hit wrong URLs (e.g. `POST /api/auth/api/get` 404).** The plugin exposes `authClient.razorpay.*` methods that use the plugin’s route map.
 
 ```typescript
 // src/lib/auth-client.ts
@@ -668,22 +670,41 @@ Handle Razorpay webhook events (automatically called by Razorpay).
 
 ## Client Usage
 
-### Better Auth Client Methods
+### Preferred: authClient.razorpay.* (method-based API)
 
-The plugin integrates with Better Auth's client API. Use `authClient.api` for all endpoint calls:
+When you add `razorpayClientPlugin()` to `createAuthClient({ plugins: [...] })`, the client gets `authClient.razorpay` with explicit methods. **Use these so requests hit the correct paths** (avoids 404s like `POST /api/auth/api/get`):
 
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-// GET request
-const plans = await authClient.api.get('/razorpay/get-plans')
+// GET plans
+const plansRes = await authClient.razorpay.getPlans()
+if (plansRes.success) console.log(plansRes.data)
 
-// POST request (create or update subscription)
-const result = await authClient.api.post('/razorpay/subscription/create-or-update', {
-  body: { plan: 'Starter', annual: false, seats: 1 },
+// List subscriptions
+const listRes = await authClient.razorpay.listSubscriptions({ referenceId: 'optional' })
+
+// Create or update subscription (returns checkoutUrl for Razorpay payment page)
+const result = await authClient.razorpay.createOrUpdateSubscription({
+  plan: 'Starter',
+  annual: false,
+  seats: 1,
 })
-// result.data.checkoutUrl -> redirect user to Razorpay payment page
+if (result.success) window.location.href = result.data.checkoutUrl
+
+// Cancel, restore, verify payment
+await authClient.razorpay.cancelSubscription({ subscriptionId: 'sub_xxx', immediately: false })
+await authClient.razorpay.restoreSubscription({ subscriptionId: 'sub_xxx' })
+await authClient.razorpay.verifyPayment({
+  razorpay_payment_id: 'pay_xxx',
+  razorpay_subscription_id: 'sub_xxx',
+  razorpay_signature: '...',
+})
 ```
+
+### Fallback: authClient.api (only if client plugin is not used)
+
+If you do not add the client plugin, you can use `authClient.api.get/post` with the Razorpay paths. **This can lead to 404s** (e.g. `POST /api/auth/api/get`) depending on how your auth client resolves paths. Prefer adding the client plugin and using `authClient.razorpay.*` instead.
 
 ### Type Safety
 
@@ -704,7 +725,7 @@ type User = typeof authClient.$Infer.Session.user
 
 ## TanStack Query Hooks
 
-The plugin works with **TanStack Query**: you can use it with `useQuery`/`useMutation` and `authClient.api` in any way you like. We provide optional pre-built hooks below; if you prefer a different setup, build your own hooks around the same endpoints (e.g. `authClient.api.get('/razorpay/get-plans')`, `authClient.api.post('/razorpay/subscription/create-or-update', { body })`, etc.).
+The plugin works with **TanStack Query**. We provide optional pre-built hooks that accept your auth client; when you use `razorpayClientPlugin()`, the hooks call `authClient.razorpay.*` so requests hit the correct paths. If you prefer a different setup, use `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., or build your own hooks around those methods.
 
 To use our pre-built hooks, install peer dependencies:
 
@@ -1357,38 +1378,43 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
 
 ### Common Issues
 
-**1. "Plan not found in configured plans"**
+**1. "POST /api/auth/api/get 404" or Razorpay requests returning 404**
+- Add the **client plugin** to your auth client: `createAuthClient({ plugins: [razorpayClientPlugin(), ...] })`
+- Use **method-based API** instead of `authClient.api.get/post`: call `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., so requests use the plugin’s route map and hit the correct paths
+- The TanStack hooks (`usePlans`, `useSubscriptions`, etc.) use `authClient.razorpay` when present, so they work correctly once the client plugin is added
+
+**2. "Plan not found in configured plans"**
 - Ensure the plan ID exists in Razorpay dashboard
 - Add the plan ID to the `plans` array in plugin configuration
 - Re-run Better Auth CLI after updating plans
 
-**2. "Webhook signature verification failed"**
+**3. "Webhook signature verification failed"**
 - Verify webhook secret matches Razorpay dashboard
 - Ensure webhook URL is correct: `https://yourdomain.com/api/auth/razorpay/webhook`
 - Check that request body is not modified
 - Verify `x-razorpay-signature` header is present
 
-**3. "Subscription already exists"**
+**4. "Subscription already exists"**
 - User already has an active subscription
 - Cancel or pause existing subscription first
 - Check subscription status before creating new one
 
-**4. "User not authenticated"**
+**5. "User not authenticated"**
 - Ensure user is logged in via Better Auth
 - Check session middleware is properly configured
 - Verify `sessionMiddleware` is used in endpoint configuration
 
-**5. "Subscription not found"**
+**6. "Subscription not found"**
 - Subscription may have been deleted
 - Check subscription ID is correct
 - Verify subscription belongs to the user
 
-**6. Database Schema Issues**
+**7. Database Schema Issues**
 - Run `npx @better-auth/cli@latest migrate` after adding plugin
 - For Prisma/Drizzle: Run `npx @better-auth/cli@latest generate`
 - Check that user additional fields are properly configured
 
-**7. Type Errors**
+**8. Type Errors**
 - Ensure you're using `createAuthClient<typeof auth>()` for type inference
 - Import types from `@deiondz/better-auth-razorpay`
 - Check that plugin is properly exported

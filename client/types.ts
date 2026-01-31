@@ -64,9 +64,34 @@ export type RazorpayApiResult<T = unknown> =
   | { success: true; data: T }
   | RazorpayApiError
 
+/** Razorpay API actions from the client plugin (authClient.razorpay). Use these so requests hit the correct paths. */
+export interface RazorpayClientActions {
+  getPlans: (fetchOptions?: { query?: Record<string, string> }) => Promise<RazorpayApiResult<PlanSummary[]>>
+  listSubscriptions: (
+    input?: ListSubscriptionsInput,
+    fetchOptions?: { query?: Record<string, string> }
+  ) => Promise<RazorpayApiResult<ListSubscriptionsResponse['data']>>
+  createOrUpdateSubscription: (
+    input: CreateOrUpdateSubscriptionInput,
+    fetchOptions?: { body?: Record<string, unknown> }
+  ) => Promise<RazorpayApiResult<CreateOrUpdateSubscriptionResponse['data']>>
+  cancelSubscription: (
+    input: CancelSubscriptionInput,
+    fetchOptions?: { body?: Record<string, unknown> }
+  ) => Promise<RazorpayApiResult<CancelSubscriptionResponse['data']>>
+  restoreSubscription: (
+    input: RestoreSubscriptionInput,
+    fetchOptions?: { body?: Record<string, unknown> }
+  ) => Promise<RazorpayApiResult<RestoreSubscriptionResponse['data']>>
+  verifyPayment: (
+    input: VerifyPaymentInput,
+    fetchOptions?: { body?: Record<string, unknown> }
+  ) => Promise<RazorpayApiResult<VerifyPaymentResponse['data']>>
+}
+
 /**
  * Minimal auth client interface for Razorpay hooks.
- * Compatible with Better Auth's createAuthClient() return type.
+ * When using the client plugin (razorpayClientPlugin()), authClient.razorpay is set and hooks use it so requests hit the correct paths (avoids 404s from api.get/post).
  */
 export interface RazorpayAuthClient {
   api: {
@@ -79,6 +104,8 @@ export interface RazorpayAuthClient {
       options?: { body?: Record<string, unknown> }
     ) => Promise<RazorpayApiResult<unknown>>
   }
+  /** Set when razorpayClientPlugin() is used in createAuthClient({ plugins: [razorpayClientPlugin()] }). Prefer these methods over api.get/post. */
+  razorpay?: RazorpayClientActions
 }
 
 /** Input for create-or-update subscription. */
