@@ -42,7 +42,7 @@ For a **scoped** package (e.g. `@your-username/better-auth-razorpay`):
 npm publish --access public
 ```
 
-`prepublishOnly` runs `npm run typecheck` before publish; if typecheck fails, publish is aborted.
+`prepublishOnly` runs `npm run build` then `npm run typecheck` before publish. The package ships compiled JavaScript from `dist/` so that Next.js (including Turbopack) and other bundlers can consume it without compiling TypeScript from `node_modules`. If build or typecheck fails, publish is aborted.
 
 ## After publishing
 

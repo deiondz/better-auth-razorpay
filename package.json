@@ -1,39 +1,36 @@
 {
   "name": "@deiondz/better-auth-razorpay",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "Better Auth plugin for Razorpay subscriptions and payments",
   "type": "module",
-  "main": "./index.ts",
-  "types": "./index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./index.ts",
-      "import": "./index.ts",
-      "default": "./index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./client": {
-      "types": "./client.ts",
-      "import": "./client.ts",
-      "default": "./client.ts"
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
     },
     "./hooks": {
-      "types": "./client/hooks.ts",
-      "import": "./client/hooks.ts",
-      "default": "./client/hooks.ts"
+      "types": "./dist/client/hooks.d.ts",
+      "import": "./dist/client/hooks.js",
+      "default": "./dist/client/hooks.js"
     }
   },
   "files": [
-    "index.ts",
-    "client.ts",
-    "client",
-    "api",
-    "lib",
+    "dist",
     "README.md",
     "RAZORPAY_PLUGIN.md"
   ],
   "scripts": {
+    "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run typecheck"
+    "prepublishOnly": "npm run build && npm run typecheck"
   },
   "keywords": [
     "better-auth",
@@ -59,7 +56,9 @@
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.0.0",
+    "@types/react": "^19.2.10",
     "react": "^18.0.0",
+    "tsup": "^8.0.0",
     "typescript": "^5.0.0"
   },
   "engines": {

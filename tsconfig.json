@@ -12,6 +12,6 @@
     "declaration": true,
     "declarationMap": true
   },
-  "include": ["*.ts", "api/**/*.ts", "lib/**/*.ts"],
+  "include": ["*.ts", "api/**/*.ts", "lib/**/*.ts", "client/**/*.ts"],
   "exclude": ["node_modules"]
 }
