@@ -54,6 +54,31 @@ function toLocalStatus(razorpayStatus: string): SubscriptionRecord['status'] {
   return map[razorpayStatus] ?? 'pending'
 }
 
+/**
+ * Status order for lifecycle: we don't downgrade when webhooks arrive out of order
+ * (e.g. subscription.authenticated after subscription.activated would overwrite "active" with "pending").
+ */
+const STATUS_ORDER: Record<SubscriptionRecord['status'], number> = {
+  created: 0,
+  pending: 1,
+  trialing: 1,
+  active: 2,
+  halted: 2,
+  cancelled: 3,
+  completed: 3,
+  expired: 3,
+}
+
+function shouldUpdateStatus(
+  currentStatus: SubscriptionRecord['status'],
+  newStatus: SubscriptionRecord['status']
+): boolean {
+  if (['cancelled', 'completed', 'expired'].includes(newStatus)) return true
+  const currentOrder = STATUS_ORDER[currentStatus] ?? 0
+  const newOrder = STATUS_ORDER[newStatus] ?? 0
+  return newOrder >= currentOrder
+}
+
 const WEBHOOK_DEBUG = process.env.NODE_ENV === 'development' || process.env.RAZORPAY_WEBHOOK_DEBUG === 'true'
 const log = (msg: string, data?: Record<string, unknown>) => {
   if (WEBHOOK_DEBUG) {
@@ -101,24 +126,28 @@ const updateSubscriptionRecord = async (
  * querying by id with a string can fail to match. We already find the record by
  * razorpaySubscriptionId, so updating by the same field guarantees a match and avoids
  * id/_id/ObjectId conversion issues.
+ *
+ * We only set status when it advances (or is terminal) so out-of-order webhooks
+ * (e.g. subscription.authenticated after subscription.activated) don't overwrite "active" with "pending".
  */
 const createStatusHandler = (
   status: SubscriptionRecord['status'],
   extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
 ): EventHandler =>
-  async (adapter, razorpaySubscriptionId, _record, subscription) => {
+  async (adapter, razorpaySubscriptionId, record, subscription) => {
     const periodStart = subscription.current_start
       ? new Date(subscription.current_start * 1000)
       : null
     const periodEnd = subscription.current_end
       ? new Date(subscription.current_end * 1000)
       : null
+    const includeStatus = shouldUpdateStatus(record.status, status)
     await updateSubscriptionRecord(
       adapter,
       razorpaySubscriptionId,
       'razorpaySubscriptionId',
       {
-        status,
+        ...(includeStatus && { status }),
         planId: subscription.plan_id,
         ...(periodStart !== null && { periodStart }),
         ...(periodEnd !== null && { periodEnd }),
