@@ -32,6 +32,7 @@ interface WebhookAdapter {
   }) => Promise<unknown>
 }
 
+
 type EventHandler = (
   adapter: WebhookAdapter,
   razorpaySubscriptionId: string,
@@ -55,12 +56,12 @@ function toLocalStatus(razorpayStatus: string): SubscriptionRecord['status'] {
 
 const updateSubscriptionRecord = async (
   adapter: WebhookAdapter,
-  razorpaySubscriptionId: string,
+  subscriptionRecordId: string,
   data: Record<string, unknown>
 ): Promise<void> => {
   await adapter.update({
     model: 'subscription',
-    where: [{ field: 'razorpaySubscriptionId', value: razorpaySubscriptionId }],
+    where: [{ field: 'id', value: subscriptionRecordId }],
     update: { data: { ...data, updatedAt: new Date() } },
   })
 }
@@ -69,15 +70,16 @@ const createStatusHandler = (
   status: SubscriptionRecord['status'],
   extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
 ): EventHandler =>
-  async (adapter, razorpaySubscriptionId, record, subscription) => {
+  async (adapter, _razorpaySubscriptionId, record, subscription) => {
     const periodStart = subscription.current_start
       ? new Date(subscription.current_start * 1000)
       : null
     const periodEnd = subscription.current_end
       ? new Date(subscription.current_end * 1000)
       : null
-    await updateSubscriptionRecord(adapter, razorpaySubscriptionId, {
+    await updateSubscriptionRecord(adapter, record.id, {
       status,
+      planId: subscription.plan_id,
       ...(periodStart !== null && { periodStart }),
       ...(periodEnd !== null && { periodEnd }),
       ...(extraFields?.(subscription) ?? {}),

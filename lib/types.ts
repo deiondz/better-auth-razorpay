@@ -43,6 +43,8 @@ export type SubscriptionStatus =
 export interface SubscriptionRecord {
   id: string
   plan: string
+  /** Razorpay plan ID (e.g. plan_xxx) for the subscription. */
+  planId?: string | null
   referenceId: string
   razorpayCustomerId?: string | null
   razorpaySubscriptionId?: string | null

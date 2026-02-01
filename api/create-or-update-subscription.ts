@@ -152,6 +152,7 @@ export const createOrUpdateSubscription = (
               subscription: {
                 id: string
                 plan: string
+                planId: string | null
                 status: SubscriptionRecord['status']
                 razorpaySubscriptionId: string | null
                 cancelAtPeriodEnd: boolean
@@ -162,6 +163,7 @@ export const createOrUpdateSubscription = (
               subscription: {
                 id: existing.id,
                 plan: existing.plan,
+                planId: existing.planId ?? null,
                 status: existing.status,
                 razorpaySubscriptionId: existing.razorpaySubscriptionId ?? null,
                 cancelAtPeriodEnd: existing.cancelAtPeriodEnd ?? false,
@@ -218,6 +220,7 @@ export const createOrUpdateSubscription = (
           const tempSub: SubscriptionRecord = {
             id: appTrialSub?.id ?? '',
             plan: plan.name,
+            planId,
             referenceId: userId,
             status: 'created',
             cancelAtPeriodEnd: false,
@@ -259,6 +262,7 @@ export const createOrUpdateSubscription = (
             update: {
               data: {
                 plan: plan.name,
+                planId,
                 razorpaySubscriptionId: rpSubscription.id,
                 status: newStatus,
                 trialEnd: now,
@@ -274,6 +278,7 @@ export const createOrUpdateSubscription = (
             const updatedRecord: SubscriptionRecord = {
               ...appTrialSub,
               plan: plan.name,
+              planId,
               razorpaySubscriptionId: rpSubscription.id,
               status: newStatus,
               trialEnd: now,
@@ -312,6 +317,7 @@ export const createOrUpdateSubscription = (
         const subscriptionRecord: Omit<SubscriptionRecord, 'id'> & { id: string } = {
           id: localId,
           plan: plan.name,
+          planId,
           referenceId: userId,
           razorpayCustomerId: user.razorpayCustomerId ?? null,
           razorpaySubscriptionId: rpSubscription.id,
