@@ -61,8 +61,8 @@ export const createOrUpdateSubscription = (
         const plan =
           body.plan.startsWith('plan_')
             ? plans.find(
-                (p) => p.monthlyPlanId === body.plan || p.annualPlanId === body.plan
-              )
+              (p) => p.monthlyPlanId === body.plan || p.annualPlanId === body.plan
+            )
             : plans.find((p) => p.name === body.plan)
         if (!plan) {
           return {
@@ -99,7 +99,7 @@ export const createOrUpdateSubscription = (
 
         if (subOpts.authorizeReference) {
           const allowed = await subOpts.authorizeReference({
-            user: user as { id: string; email?: string; name?: string; [key: string]: unknown },
+            user: user as { id: string; email?: string; name?: string;[key: string]: unknown },
             referenceId: userId,
             action: 'create-or-update',
           })
@@ -174,7 +174,7 @@ export const createOrUpdateSubscription = (
           }
         }
 
-        // One subscription per user at a time: block if they already have an active one
+        // One subscription per user at a time: block if they already have an active paid one (with Razorpay subscription)
         const existingSubs = (await ctx.context.adapter.findMany({
           model: 'subscription',
           where: [{ field: 'referenceId', value: userId }],
@@ -186,9 +186,16 @@ export const createOrUpdateSubscription = (
           'created',
           'halted',
         ]
-        const hasActiveSubscription =
-          (existingSubs ?? []).filter((s) => activeStatuses.includes(s.status)).length > 0
-        if (hasActiveSubscription) {
+        const subs = existingSubs ?? []
+        const activePaidSubs = subs.filter(
+          (s) => activeStatuses.includes(s.status) && s.razorpaySubscriptionId
+        )
+        const appTrialSubs = subs.filter(
+          (s) => s.status === 'trialing' && !s.razorpaySubscriptionId
+        )
+        const appTrialSub = appTrialSubs.length === 1 ? appTrialSubs[0]! : null
+
+        if (activePaidSubs.length > 0) {
           return {
             success: false,
             error: {
@@ -198,7 +205,6 @@ export const createOrUpdateSubscription = (
           }
         }
 
-        // Create new subscription
         const totalCount = body.annual ? 1 : 12
         const subscriptionPayload: Parameters<Razorpay['subscriptions']['create']>[0] = {
           plan_id: planId,
@@ -210,7 +216,7 @@ export const createOrUpdateSubscription = (
 
         if (subOpts.getSubscriptionCreateParams) {
           const tempSub: SubscriptionRecord = {
-            id: '',
+            id: appTrialSub?.id ?? '',
             plan: plan.name,
             referenceId: userId,
             status: 'created',
@@ -220,7 +226,7 @@ export const createOrUpdateSubscription = (
             updatedAt: now,
           }
           const extra = await subOpts.getSubscriptionCreateParams({
-            user: user as { id: string; email?: string; name?: string; [key: string]: unknown },
+            user: user as { id: string; email?: string; name?: string;[key: string]: unknown },
             session: ctx.context.session,
             plan,
             subscription: tempSub,
@@ -237,21 +243,83 @@ export const createOrUpdateSubscription = (
           subscriptionPayload
         )) as RazorpaySubscription
 
+        const periodStart = rpSubscription.current_start
+          ? new Date(rpSubscription.current_start * 1000)
+          : null
+        const periodEnd = rpSubscription.current_end
+          ? new Date(rpSubscription.current_end * 1000)
+          : null
+        const newStatus = toLocalStatus(rpSubscription.status)
+
+        if (appTrialSub) {
+          // Upgrade from app trial: update the existing record instead of creating a new one
+          await ctx.context.adapter.update({
+            model: 'subscription',
+            where: [{ field: 'id', value: appTrialSub.id }],
+            update: {
+              data: {
+                plan: plan.name,
+                razorpaySubscriptionId: rpSubscription.id,
+                status: newStatus,
+                trialEnd: now,
+                periodStart,
+                periodEnd,
+                seats: body.seats,
+                updatedAt: now,
+              },
+            },
+          })
+
+          if (subOpts.onSubscriptionCreated) {
+            const updatedRecord: SubscriptionRecord = {
+              ...appTrialSub,
+              plan: plan.name,
+              razorpaySubscriptionId: rpSubscription.id,
+              status: newStatus,
+              trialEnd: now,
+              periodStart,
+              periodEnd,
+              seats: body.seats,
+              updatedAt: now,
+            }
+            await subOpts.onSubscriptionCreated({
+              razorpaySubscription: rpSubscription,
+              subscription: updatedRecord,
+              plan,
+            })
+          }
+
+          const data: {
+            checkoutUrl?: string | null
+            subscriptionId: string
+            razorpaySubscriptionId: string
+          } = {
+            subscriptionId: appTrialSub.id,
+            razorpaySubscriptionId: rpSubscription.id,
+          }
+          if (!body.embed) {
+            data.checkoutUrl =
+              body.disableRedirect
+                ? rpSubscription.short_url
+                : body.successUrl
+                  ? `${rpSubscription.short_url}?redirect=${encodeURIComponent(body.successUrl)}`
+                  : rpSubscription.short_url
+          }
+          return { success: true, data }
+        }
+
+        // Create new subscription record
         const subscriptionRecord: Omit<SubscriptionRecord, 'id'> & { id: string } = {
           id: localId,
           plan: plan.name,
           referenceId: userId,
           razorpayCustomerId: user.razorpayCustomerId ?? null,
           razorpaySubscriptionId: rpSubscription.id,
-          status: toLocalStatus(rpSubscription.status),
+          status: newStatus,
           trialStart: null,
           trialEnd: null,
-          periodStart: rpSubscription.current_start
-            ? new Date(rpSubscription.current_start * 1000)
-            : null,
-          periodEnd: rpSubscription.current_end
-            ? new Date(rpSubscription.current_end * 1000)
-            : null,
+          periodStart,
+          periodEnd,
           cancelAtPeriodEnd: false,
           seats: body.seats,
           groupId: null,
@@ -259,7 +327,6 @@ export const createOrUpdateSubscription = (
           updatedAt: now,
         }
 
-        // forceAllowId: allow id in data (Better Auth adapter rejects create with id otherwise)
         await ctx.context.adapter.create({
           model: 'subscription',
           data: subscriptionRecord,

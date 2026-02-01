@@ -26,6 +26,7 @@ import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
  * @param options.razorpayKeySecret - Razorpay API key secret (required when razorpayClient is not provided; when set, also enables POST /razorpay/verify-payment)
  * @param options.razorpayWebhookSecret - Webhook secret for signature verification
  * @param options.createCustomerOnSignUp - Create Razorpay customer when user signs up (default: false)
+ * @param options.trialOnSignUp - Optional. When set with createCustomerOnSignUp, creates an app-level trial subscription at sign-up. { days, planName? }. Omit for no sign-up trial.
  * @param options.onCustomerCreate - Callback after customer is created
  * @param options.getCustomerCreateParams - Custom params when creating customer
  * @param options.subscription - Subscription config (enabled, plans, callbacks, authorizeReference)
@@ -38,6 +39,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
     razorpayKeySecret,
     razorpayWebhookSecret,
     createCustomerOnSignUp = false,
+    trialOnSignUp,
     onCustomerCreate,
     getCustomerCreateParams,
     subscription: subOpts,
@@ -117,9 +119,21 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
             create: {
               after: async (
                 user: RazorpayUserRecord & { id: string },
-                ctx: { context?: { adapter?: { update: (p: unknown) => Promise<unknown> } }; adapter?: { update: (p: unknown) => Promise<unknown> }; session?: unknown }
+                ctx: {
+                  context?: {
+                    adapter?: {
+                      update: (p: unknown) => Promise<unknown>
+                      create?: (p: unknown) => Promise<unknown>
+                    }
+                  }
+                  adapter?: {
+                    update: (p: unknown) => Promise<unknown>
+                    create?: (p: unknown) => Promise<unknown>
+                  }
+                  session?: unknown
+                }
               ) => {
-                const adapter = ctx.context?.adapter ?? (ctx as { adapter?: { update: (p: unknown) => Promise<unknown> } }).adapter
+                const adapter = ctx.context?.adapter ?? (ctx as { adapter?: { update: (p: unknown) => Promise<unknown>; create?: (p: unknown) => Promise<unknown> } }).adapter
                 if (!adapter?.update) return
                 try {
                   const params: { name?: string; email?: string; contact?: string; [key: string]: unknown } = {
@@ -146,6 +160,34 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
                       user: user as RazorpayUserRecord,
                       razorpayCustomer: { id: customer.id, ...(customer as unknown as Record<string, unknown>) },
                     })
+                  }
+                  if (trialOnSignUp && typeof trialOnSignUp.days === 'number' && trialOnSignUp.days > 0 && adapter.create) {
+                    const now = new Date()
+                    const trialEnd = new Date(now.getTime() + trialOnSignUp.days * 24 * 60 * 60 * 1000)
+                    const planName = trialOnSignUp.planName ?? 'Trial'
+                    const localId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+                    const subscriptionRecord = {
+                      id: localId,
+                      plan: planName,
+                      referenceId: user.id,
+                      razorpayCustomerId: customer.id,
+                      razorpaySubscriptionId: null as string | null,
+                      status: 'trialing' as const,
+                      trialStart: now,
+                      trialEnd,
+                      periodStart: null as Date | null,
+                      periodEnd: null as Date | null,
+                      cancelAtPeriodEnd: false,
+                      seats: 1,
+                      groupId: null as string | null,
+                      createdAt: now,
+                      updatedAt: now,
+                    }
+                    await adapter.create({
+                      model: 'subscription',
+                      data: subscriptionRecord,
+                      forceAllowId: true,
+                    } as Parameters<NonNullable<typeof adapter.create>>[0])
                   }
                 } catch (err) {
                   console.error('[better-auth-razorpay] Create customer on sign-up failed:', err)

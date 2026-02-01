@@ -219,6 +219,7 @@ interface RazorpayPluginOptions {
   razorpayKeySecret?: string     // Optional: Razorpay API key secret; required when razorpayClient is not provided; when set, enables POST /razorpay/verify-payment
   razorpayWebhookSecret?: string // Optional: Webhook secret for signature verification
   createCustomerOnSignUp?: boolean // Optional: Create Razorpay customer on user sign-up (default: false)
+  trialOnSignUp?: { days: number; planName?: string } // Optional: When set with createCustomerOnSignUp, creates an app-level trial subscription at sign-up. Omit for no sign-up trial.
   onCustomerCreate?: (args) => Promise<void>
   getCustomerCreateParams?: (args) => Promise<{ params?: Record<string, unknown> }>
   subscription?: SubscriptionOptions // Optional: { enabled, plans, callbacks, authorizeReference, ... }
@@ -226,6 +227,17 @@ interface RazorpayPluginOptions {
   onWebhookEvent?: (payload, context) => Promise<void> // Optional: Custom webhook callback
 }
 ```
+
+### Optional: Trial on sign-up
+
+When you want new users to get a **free trial** without adding a payment method first (e.g. 14 days, then they must subscribe):
+
+- Set **both** `createCustomerOnSignUp: true` and `trialOnSignUp: { days: 14, planName: 'Trial' }` (or any `days` and display `planName`).
+- On sign-up, the plugin creates a Razorpay customer and **one local subscription** with `status: 'trialing'`, `trialStart` / `trialEnd`, and no `razorpaySubscriptionId` (no Razorpay subscription until they subscribe).
+- **Subscription list** returns this record; your app can show "Free trial — ends &lt;trialEnd&gt;" and gate features when `trialEnd < now`.
+- The user can **subscribe anytime** via create-or-update (choose a plan, get checkout URL); the same record is updated to a paid subscription (plan, `razorpaySubscriptionId`, status from Razorpay).
+
+**Configurable:** Omit `trialOnSignUp` for products that do not want sign-up trials (e.g. checkout-first or plan-based trial only). If `trialOnSignUp` is not set, behavior is unchanged.
 
 ### Callback functions
 
@@ -254,6 +266,7 @@ razorpayPlugin({
   razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
   razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET, // optional: enables verify-payment endpoint
   createCustomerOnSignUp: true,
+  trialOnSignUp: { days: 14, planName: 'Trial' }, // optional: app-level trial at sign-up
   onCustomerCreate: async ({ user, razorpayCustomer }) => {
     console.log(`Razorpay customer created for user ${user.id}: ${razorpayCustomer.id}`)
   },

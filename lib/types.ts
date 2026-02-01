@@ -176,6 +176,13 @@ export interface RazorpayPluginOptions {
   razorpayWebhookSecret?: string
   /** Create Razorpay customer when user signs up. Default: false. */
   createCustomerOnSignUp?: boolean
+  /**
+   * Optional. When set with createCustomerOnSignUp, creates an app-level trial subscription at sign-up (no Razorpay subscription until user subscribes).
+   * Omit for no sign-up trial. Only applies when both createCustomerOnSignUp and trialOnSignUp are set.
+   * @property days - Trial length in days (e.g. 7, 14, 30). Required when trialOnSignUp is set.
+   * @property planName - Display name for the trial in the subscription list (e.g. "Trial", "Free trial"). Default: "Trial".
+   */
+  trialOnSignUp?: { days: number; planName?: string }
   /** Called after a Razorpay customer is created. */
   onCustomerCreate?: (args: {
     user: RazorpayUserRecord
