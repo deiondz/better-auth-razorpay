@@ -63,22 +63,6 @@ export const createOrUpdateSubscription = (
           }
         }
 
-        const plans = await resolvePlans(subOpts.plans)
-        // Look up by plan name or by Razorpay plan ID (plan_*)
-        const plan =
-          body.plan.startsWith('plan_')
-            ? plans.find(
-              (p) => p.monthlyPlanId === body.plan || p.annualPlanId === body.plan
-            )
-            : plans.find((p) => p.name === body.plan)
-        if (!plan) {
-          return {
-            success: false,
-            error: { code: 'PLAN_NOT_FOUND', description: `Plan "${body.plan}" not found` },
-          }
-        }
-
-        const planId = body.annual && plan.annualPlanId ? plan.annualPlanId : plan.monthlyPlanId
         const userId = ctx.context.session?.user?.id
         if (!userId) {
           return {
@@ -250,7 +234,21 @@ export const createOrUpdateSubscription = (
           return { success: true, data }
         }
 
-        const totalCount = body.annual ? 1 : 12
+        // Plan validation only when creating a new subscription (not when reusing a created one). Always by plan_id.
+        const plans = await resolvePlans(subOpts.plans)
+        const plan = plans.find(
+          (p) => p.monthlyPlanId === body.plan || p.annualPlanId === body.plan
+        )
+        if (!plan) {
+          return {
+            success: false,
+            error: { code: 'PLAN_NOT_FOUND', description: `Plan ID "${body.plan}" not found` },
+          }
+        }
+
+        const planId = body.plan
+        const isAnnual = plan.annualPlanId != null && body.plan === plan.annualPlanId
+        const totalCount = isAnnual ? 1 : 12
         const subscriptionPayload: Parameters<Razorpay['subscriptions']['create']>[0] = {
           plan_id: planId,
           total_count: totalCount,
