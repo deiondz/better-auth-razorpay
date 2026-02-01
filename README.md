@@ -63,8 +63,57 @@ The package includes `razorpay` and `zod` as dependencies.
 
 2. **Configure the Plugin**
 
+You can either pass an existing Razorpay instance (`razorpayClient`) or let the plugin create it from credentials (`razorpayKeyId` + `razorpayKeySecret`).
+
+**Option A: Pass credentials (plugin creates the Razorpay instance)**
+
 ```typescript
 // src/lib/auth.ts (or your auth configuration file)
+import { betterAuth } from 'better-auth'
+import { razorpayPlugin } from '@deiondz/better-auth-razorpay'
+
+export const auth = betterAuth({
+  // ... your Better Auth configuration
+  database: mongodbAdapter(await connect()), // or your adapter
+  secret: process.env.BETTER_AUTH_SECRET,
+  baseURL: process.env.BETTER_AUTH_URL,
+  
+  plugins: [
+    razorpayPlugin({
+      razorpayKeyId: process.env.RAZORPAY_KEY_ID!,
+      razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET!, // also enables verify-payment endpoint when set
+      razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET,
+      createCustomerOnSignUp: true, // optional
+      subscription: {
+        enabled: true,
+        plans: [
+          {
+            name: 'Starter',
+            monthlyPlanId: 'plan_xxxxxxxxxxxx',
+            annualPlanId: 'plan_yyyyyyyyyyyy', // optional
+            limits: { features: 5 },
+            freeTrial: { days: 7 }, // optional
+          },
+        ],
+        onSubscriptionActivated: async ({ subscription, plan }) => {
+          console.log(`Subscription ${subscription.id} activated for plan ${plan.name}`)
+        },
+      },
+      onWebhookEvent: async (payload, context) => {
+        const { event, subscription, payment } = payload
+        if (event === 'subscription.charged' && payment) {
+          // Send confirmation email, etc.
+        }
+      },
+    }),
+  ],
+})
+```
+
+**Option B: Pass an existing Razorpay client**
+
+```typescript
+// src/lib/auth.ts
 import Razorpay from 'razorpay'
 import { betterAuth } from 'better-auth'
 import { razorpayPlugin } from '@deiondz/better-auth-razorpay'
@@ -76,7 +125,7 @@ const razorpayClient = new Razorpay({
 
 export const auth = betterAuth({
   // ... your Better Auth configuration
-  database: mongodbAdapter(await connect()), // or your adapter
+  database: mongodbAdapter(await connect()),
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
   
@@ -165,9 +214,10 @@ npx @better-auth/cli@latest generate
 
 ```typescript
 interface RazorpayPluginOptions {
-  razorpayClient: Razorpay         // Required: Initialized Razorpay instance (key_id, key_secret)
-  razorpayWebhookSecret?: string  // Optional: Webhook secret for signature verification
-  razorpayKeySecret?: string      // Optional: API key secret for payment signature verification; when set, enables POST /razorpay/verify-payment (same secret as Razorpay client, not webhook secret)
+  razorpayClient?: Razorpay       // Optional: Initialized Razorpay instance; omit when using razorpayKeyId + razorpayKeySecret
+  razorpayKeyId?: string          // Optional: Razorpay API key ID; required when razorpayClient is not provided (plugin creates the instance)
+  razorpayKeySecret?: string     // Optional: Razorpay API key secret; required when razorpayClient is not provided; when set, enables POST /razorpay/verify-payment
+  razorpayWebhookSecret?: string // Optional: Webhook secret for signature verification
   createCustomerOnSignUp?: boolean // Optional: Create Razorpay customer on user sign-up (default: false)
   onCustomerCreate?: (args) => Promise<void>
   getCustomerCreateParams?: (args) => Promise<{ params?: Record<string, unknown> }>
@@ -287,7 +337,7 @@ All endpoints are prefixed with `/api/auth/razorpay/` (or your configured `baseP
 
 | Action | Method | Endpoint | Description |
 |--------|--------|----------|-------------|
-| Create or update | `POST` | `subscription/create-or-update` | Start a subscription or update; returns `checkoutUrl` for Razorpay payment page. Body: `plan`, `annual?`, `seats?`, `subscriptionId?`, `successUrl?`, `disableRedirect?`. |
+| Create or update | `POST` | `subscription/create-or-update` | Start a subscription or update; returns `checkoutUrl` for Razorpay payment page. Body: `plan` (plan **name** or Razorpay plan ID `plan_*`), `annual?`, `seats?`, `subscriptionId?`, `successUrl?`, `disableRedirect?`. |
 | Cancel | `POST` | `subscription/cancel` | Cancel by local subscription ID. Body: `subscriptionId`, `immediately?`. |
 | Restore | `POST` | `subscription/restore` | Restore a subscription scheduled to cancel. Body: `subscriptionId`. |
 | List | `GET` | `subscription/list` | List active/trialing subscriptions. Query: `referenceId?` (default: current user). |
@@ -685,6 +735,7 @@ if (plansRes.success) console.log(plansRes.data)
 const listRes = await authClient.razorpay.listSubscriptions({ referenceId: 'optional' })
 
 // Create or update subscription (returns checkoutUrl for Razorpay payment page)
+// plan: use the plan name (e.g. 'Starter') or the Razorpay plan ID (e.g. 'plan_xxxxxxxxxxxx')
 const result = await authClient.razorpay.createOrUpdateSubscription({
   plan: 'Starter',
   annual: false,

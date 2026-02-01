@@ -164,14 +164,16 @@ export type OnWebhookEventCallback = (
   context: RazorpayWebhookContext
 ) => Promise<void>
 
-/** Main plugin options: client, webhook secret, customer creation, subscription config, callbacks. */
+/** Main plugin options: client or credentials, webhook secret, customer creation, subscription config, callbacks. */
 export interface RazorpayPluginOptions {
-  /** Initialized Razorpay client instance. */
-  razorpayClient: import('razorpay')
+  /** Initialized Razorpay client instance. Omit if using razorpayKeyId + razorpayKeySecret (plugin creates the instance). */
+  razorpayClient?: import('razorpay')
+  /** Razorpay API key ID. Required when razorpayClient is not provided; plugin creates the Razorpay instance. */
+  razorpayKeyId?: string
+  /** Razorpay API key secret. Required when razorpayClient is not provided (plugin creates the instance). When set, also enables POST /razorpay/verify-payment (same as Razorpay client secret, not webhook secret). */
+  razorpayKeySecret?: string
   /** Webhook secret for signature verification. */
   razorpayWebhookSecret?: string
-  /** API key secret for payment signature verification. When set, enables POST /razorpay/verify-payment (same secret as Razorpay client, not webhook secret). */
-  razorpayKeySecret?: string
   /** Create Razorpay customer when user signs up. Default: false. */
   createCustomerOnSignUp?: boolean
   /** Called after a Razorpay customer is created. */

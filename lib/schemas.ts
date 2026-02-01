@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 export const createOrUpdateSubscriptionSchema = z.object({
-  plan: z.string().min(1, 'Plan name is required'),
+  plan: z.string().min(1, 'Plan name or Razorpay plan ID (plan_*) is required'),
   annual: z.boolean().optional().default(false),
   seats: z.number().int().min(1).optional().default(1),
   subscriptionId: z.string().optional(),

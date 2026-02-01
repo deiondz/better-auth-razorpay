@@ -1,4 +1,5 @@
 import type { BetterAuthPlugin } from 'better-auth'
+import Razorpay from 'razorpay'
 import {
   cancelSubscription,
   createOrUpdateSubscription,
@@ -20,9 +21,10 @@ import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
  * - Plans: named plans with monthly/annual IDs, limits, free trial
  *
  * @param options - Plugin configuration
- * @param options.razorpayClient - Initialized Razorpay instance (key_id, key_secret)
+ * @param options.razorpayClient - Initialized Razorpay instance (optional; omit when using razorpayKeyId + razorpayKeySecret)
+ * @param options.razorpayKeyId - Razorpay API key ID (required when razorpayClient is not provided; plugin creates the Razorpay instance)
+ * @param options.razorpayKeySecret - Razorpay API key secret (required when razorpayClient is not provided; when set, also enables POST /razorpay/verify-payment)
  * @param options.razorpayWebhookSecret - Webhook secret for signature verification
- * @param options.razorpayKeySecret - API key secret for payment signature verification (optional; when set, enables POST /razorpay/verify-payment)
  * @param options.createCustomerOnSignUp - Create Razorpay customer when user signs up (default: false)
  * @param options.onCustomerCreate - Callback after customer is created
  * @param options.getCustomerCreateParams - Custom params when creating customer
@@ -32,8 +34,9 @@ import type { RazorpayPluginOptions, RazorpayUserRecord } from './lib'
 export const razorpayPlugin = (options: RazorpayPluginOptions) => {
   const {
     razorpayClient,
-    razorpayWebhookSecret,
+    razorpayKeyId,
     razorpayKeySecret,
+    razorpayWebhookSecret,
     createCustomerOnSignUp = false,
     onCustomerCreate,
     getCustomerCreateParams,
@@ -41,11 +44,24 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
     onEvent,
   } = options
 
-  if (!razorpayClient) {
-    throw new Error('Razorpay plugin: razorpayClient is required')
+  const hasClient = Boolean(razorpayClient)
+  const hasCredentials = Boolean(razorpayKeyId && razorpayKeySecret)
+  if (!hasClient && !hasCredentials) {
+    throw new Error(
+      'Razorpay plugin: provide either razorpayClient or both razorpayKeyId and razorpayKeySecret'
+    )
+  }
+  if (hasClient && hasCredentials) {
+    throw new Error(
+      'Razorpay plugin: provide either razorpayClient or credentials (razorpayKeyId + razorpayKeySecret), not both'
+    )
+  }
+  if (!hasClient && (typeof razorpayKeyId !== 'string' || typeof razorpayKeySecret !== 'string')) {
+    throw new Error('Razorpay plugin: both razorpayKeyId and razorpayKeySecret are required when not providing razorpayClient')
   }
 
-  const razorpay = razorpayClient as import('razorpay')
+  const razorpay: import('razorpay') =
+    razorpayClient ?? new Razorpay({ key_id: razorpayKeyId!, key_secret: razorpayKeySecret! })
 
   const plugin = {
     id: 'razorpay-plugin',

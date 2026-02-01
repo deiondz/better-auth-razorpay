@@ -57,7 +57,13 @@ export const createOrUpdateSubscription = (
         }
 
         const plans = await resolvePlans(subOpts.plans)
-        const plan = plans.find((p) => p.name === body.plan)
+        // Look up by plan name or by Razorpay plan ID (plan_*)
+        const plan =
+          body.plan.startsWith('plan_')
+            ? plans.find(
+                (p) => p.monthlyPlanId === body.plan || p.annualPlanId === body.plan
+              )
+            : plans.find((p) => p.name === body.plan)
         if (!plan) {
           return {
             success: false,
