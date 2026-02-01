@@ -120,14 +120,12 @@ export const razorpayClientPlugin = () =>
         verifyPayment: async (
           input: VerifyPaymentInput,
           fetchOptions?: Parameters<FetchFn>[1]
-        ) =>
-          unwrapBetterFetch<RazorpayApiResult<VerifyPaymentResponse['data']>>(
-            await $fetch(PATHS.verifyPayment, {
-              method: 'POST',
-              body: input as unknown as Record<string, unknown>,
-              ...fetchOptions,
-            })
-          ),
+        ): Promise<RazorpayApiResult<VerifyPaymentResponse['data']>> =>
+          $fetch(PATHS.verifyPayment, {
+            method: 'POST',
+            body: input as unknown as Record<string, unknown>,
+            ...fetchOptions,
+          }) as Promise<RazorpayApiResult<VerifyPaymentResponse['data']>>,
       },
     }),
   }) satisfies BetterAuthClientPlugin
