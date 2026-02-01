@@ -28,7 +28,7 @@ interface WebhookAdapter {
   update: (params: {
     model: string
     where: { field: string; value: string }[]
-    update: { data: Record<string, unknown> }
+    update: Record<string, unknown> | { data: Record<string, unknown> }
   }) => Promise<unknown>
 }
 
@@ -69,10 +69,13 @@ const updateSubscriptionRecord = async (
   data: Record<string, unknown>
 ): Promise<void> => {
   const updateData = { ...data, updatedAt: new Date() }
+  // Pass flat update so the adapter sets top-level fields (status, planId, etc.). Some adapters
+  // (e.g. MongoDB) do $set: update; if we passed update: { data: updateData }, they would set
+  // a nested "data" field and the document's status/planId would not change.
   const params = {
     model: 'subscription',
     where: [{ field: whereField, value: subscriptionRecordId }],
-    update: { data: updateData },
+    update: updateData,
   }
   log('updateSubscriptionRecord call', {
     subscriptionRecordId,
@@ -94,49 +97,34 @@ const updateSubscriptionRecord = async (
 }
 
 /**
- * Resolve primary key for update. Better Auth and adapters use the field name "id"; we prefer
- * record.id. MongoDB: adapters should use mapKeysTransformOutput so _id is returned as "id". If
- * the adapter returns raw docs with only _id (e.g. custom MongoDB without mapping for plugin
- * models), we use _id for the where clause so the webhook update still works.
+ * Webhook updates by razorpaySubscriptionId (not by id/_id). MongoDB stores _id as ObjectId;
+ * querying by id with a string can fail to match. We already find the record by
+ * razorpaySubscriptionId, so updating by the same field guarantees a match and avoids
+ * id/_id/ObjectId conversion issues.
  */
-function getSubscriptionPrimaryKey(
-  record: SubscriptionRecord & { _id?: string }
-): { value: string; field: string } {
-  if (record.id != null && record.id !== '') {
-    return { value: record.id, field: 'id' }
-  }
-  if (record._id != null && record._id !== '') {
-    return { value: record._id, field: '_id' }
-  }
-  return { value: '', field: 'id' }
-}
-
 const createStatusHandler = (
   status: SubscriptionRecord['status'],
   extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
 ): EventHandler =>
-  async (adapter, _razorpaySubscriptionId, record, subscription) => {
-    const primaryKey = getSubscriptionPrimaryKey(record as SubscriptionRecord & { _id?: string })
-    if (!primaryKey.value) {
-      console.error('[razorpay-webhook] record has no id or _id', {
-        recordKeys: Object.keys(record),
-        razorpaySubscriptionId: record.razorpaySubscriptionId,
-      })
-      throw new Error('Subscription record has no primary key (id or _id)')
-    }
+  async (adapter, razorpaySubscriptionId, _record, subscription) => {
     const periodStart = subscription.current_start
       ? new Date(subscription.current_start * 1000)
       : null
     const periodEnd = subscription.current_end
       ? new Date(subscription.current_end * 1000)
       : null
-    await updateSubscriptionRecord(adapter, primaryKey.value, primaryKey.field, {
-      status,
-      planId: subscription.plan_id,
-      ...(periodStart !== null && { periodStart }),
-      ...(periodEnd !== null && { periodEnd }),
-      ...(extraFields?.(subscription) ?? {}),
-    })
+    await updateSubscriptionRecord(
+      adapter,
+      razorpaySubscriptionId,
+      'razorpaySubscriptionId',
+      {
+        status,
+        planId: subscription.plan_id,
+        ...(periodStart !== null && { periodStart }),
+        ...(periodEnd !== null && { periodEnd }),
+        ...(extraFields?.(subscription) ?? {}),
+      }
+    )
   }
 
 const eventHandlers: Record<string, EventHandler> = {
@@ -194,10 +182,10 @@ const invokeCallback = async (
       },
       payment: payload.payment?.entity
         ? {
-            id: payload.payment.entity.id,
-            amount: payload.payment.entity.amount,
-            currency: payload.payment.entity.currency ?? 'INR',
-          }
+          id: payload.payment.entity.id,
+          amount: payload.payment.entity.amount,
+          currency: payload.payment.entity.currency ?? 'INR',
+        }
         : undefined,
     },
     { userId, user: { id: user.id, email: user.email, name: user.name } }
@@ -275,12 +263,10 @@ async function processWebhookEvent(
       }
     }
 
-    const primaryKey = getSubscriptionPrimaryKey(record)
     log('record found', {
       event,
       razorpaySubscriptionId: subscriptionEntity.id,
-      recordId: primaryKey.value,
-      whereField: primaryKey.field,
+      whereField: 'razorpaySubscriptionId',
       hasId: 'id' in record && record.id != null,
       has_id: '_id' in record && record._id != null,
       status: record.status,
@@ -302,13 +288,13 @@ async function processWebhookEvent(
       }
     }
 
-    log('calling handler', { event, recordId: primaryKey.value })
+    log('calling handler', { event, razorpaySubscriptionId: subscriptionEntity.id })
     try {
       await handler(adapter, subscriptionEntity.id, record, subscriptionEntity)
     } catch (handlerError) {
       console.error('[razorpay-webhook] handler failed', {
         event,
-        recordId: primaryKey.value,
+        razorpaySubscriptionId: subscriptionEntity.id,
         error: handlerError instanceof Error ? handlerError.message : String(handlerError),
       })
       throw handlerError
