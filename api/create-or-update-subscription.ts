@@ -329,12 +329,17 @@ export const createOrUpdateSubscription = (
         const planId = body.plan
         const isAnnual = plan.annualPlanId != null && body.plan === plan.annualPlanId
         const totalCount = isAnnual ? 1 : 12
-        const subscriptionPayload: Parameters<Razorpay['subscriptions']['create']>[0] = {
+        const subscriptionPayload: Parameters<Razorpay['subscriptions']['create']>[0] & {
+          customer_id?: string
+        } = {
           plan_id: planId,
           total_count: totalCount,
           quantity: body.seats,
           customer_notify: true,
           notes: { referenceId: userId, planName: plan.name },
+        }
+        if (user.razorpayCustomerId) {
+          subscriptionPayload.customer_id = user.razorpayCustomerId
         }
 
         if (subOpts.getSubscriptionCreateParams) {
@@ -365,7 +370,7 @@ export const createOrUpdateSubscription = (
         }
 
         const rpSubscription = (await razorpay.subscriptions.create(
-          subscriptionPayload
+          subscriptionPayload as Parameters<Razorpay['subscriptions']['create']>[0]
         )) as RazorpaySubscription
 
         const periodStart = rpSubscription.current_start

@@ -725,10 +725,13 @@ Handle Razorpay webhook events (automatically called by Razorpay).
 - `subscription.activated` - Subscription activated
 - `subscription.charged` - Payment charged
 - `subscription.cancelled` - Subscription cancelled
+- `subscription.completed` - Subscription completed (all cycles done)
 - `subscription.paused` - Subscription paused
 - `subscription.resumed` - Subscription resumed
 - `subscription.pending` - Subscription pending
 - `subscription.halted` - Subscription halted
+- `subscription.expired` - Subscription expired
+- `subscription.updated` - Subscription updated (plan/quantity/period changed)
 
 **Response:**
 
@@ -1511,6 +1514,12 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
 - Ensure you're using `createAuthClient<typeof auth>()` for type inference
 - Import types from `@deiondz/better-auth-razorpay`
 - Check that plugin is properly exported
+
+## Scope for improvement
+
+Potential future enhancements (not currently implemented):
+
+- **Plan-level / Razorpay-native trial:** Pass `trial_period` (days) to Razorpay when creating a subscription (from plan `freeTrial.days`), handle `subscription.trialing` webhook if Razorpay adds or documents it, and set `trialStart` / `trialEnd` from Razorpay payload. Today only **app-level trial** (`trialOnSignUp`) is supported: a local trialing subscription at sign-up with no Razorpay subscription until the user chooses a plan.
 
 ## Resources
 
