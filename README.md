@@ -392,9 +392,12 @@ Each plan in the response includes optional **price details** (`monthly`, `annua
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-// Using Better Auth client
-const response = await authClient.api.get('/razorpay/get-plans')
-const { data } = response
+// Prefer: use authClient.razorpay (requires razorpayClientPlugin() in createAuthClient)
+const result = await authClient.razorpay.getPlans()
+if (result.success) {
+  const plans = result.data
+  // plans: PlanSummary[]
+}
 
 // Or using fetch directly
 const response = await fetch('/api/auth/razorpay/get-plans')
@@ -403,11 +406,11 @@ const { data } = await response.json()
 
 ---
 
-### 2. Subscribe
+### 2. Create or update subscription
 
-Create a new subscription for the authenticated user.
+Create a new subscription or update an existing one for the authenticated user.
 
-**Endpoint:** `POST /api/auth/razorpay/subscribe`
+**Endpoint:** `POST /api/auth/razorpay/subscription/create-or-update`
 
 **Authentication:** Required (uses `sessionMiddleware`)
 
@@ -415,21 +418,13 @@ Create a new subscription for the authenticated user.
 
 ```typescript
 {
-  plan_id: string                    // Required: Plan ID from Razorpay
-  total_count?: number               // Optional: Total billing cycles (default: 12)
-  quantity?: number                  // Optional: Quantity (default: 1)
-  start_at?: number                  // Optional: Start timestamp (Unix)
-  expire_by?: number                 // Optional: Expiry timestamp (Unix)
-  customer_notify?: boolean           // Optional: Send notification (default: true)
-  addons?: Array<{                   // Optional: Addons
-    item: {
-      name: string
-      amount: number
-      currency: string
-    }
-  }>
-  offer_id?: string                  // Optional: Offer ID
-  notes?: Record<string, string>     // Optional: Custom notes
+  plan: string                       // Required: Plan name (e.g. 'Starter') or Razorpay plan ID (plan_*)
+  annual?: boolean                   // Optional: Use annual plan (default: false)
+  seats?: number                     // Optional: Seat count (default: 1)
+  subscriptionId?: string           // Optional: Existing subscription ID for updates
+  successUrl?: string                // Optional: Redirect URL after checkout
+  disableRedirect?: boolean          // Optional: Disable redirect
+  embed?: boolean                   // Optional: When true, in-page modal (no redirect); use openRazorpaySubscriptionCheckout with razorpaySubscriptionId
 }
 ```
 
@@ -438,7 +433,11 @@ Create a new subscription for the authenticated user.
 ```typescript
 {
   success: true,
-  data: RazorpaySubscription
+  data: {
+    checkoutUrl?: string | null      // Present when not embed; use for redirect
+    subscriptionId: string
+    razorpaySubscriptionId: string   // Use with embed + openRazorpaySubscriptionCheckout
+  }
 }
 ```
 
@@ -447,18 +446,18 @@ Create a new subscription for the authenticated user.
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-// Using Better Auth client
-const response = await authClient.api.post('/razorpay/subscribe', {
-  body: {
-    plan_id: 'plan_1234567890',
-    total_count: 12,
-    quantity: 1,
-  },
+// Prefer: use authClient.razorpay (requires razorpayClientPlugin() in createAuthClient)
+const result = await authClient.razorpay.createOrUpdateSubscription({
+  plan: 'Starter',
+  annual: false,
+  seats: 1,
 })
 
-if (response.success) {
-  // Redirect to Razorpay checkout
-  window.location.href = response.data.short_url
+if (result.success) {
+  if (result.data.checkoutUrl) {
+    window.location.href = result.data.checkoutUrl
+  }
+  // Or with embed: true use result.data.razorpaySubscriptionId with openRazorpaySubscriptionCheckout
 }
 ```
 
@@ -470,20 +469,22 @@ if (response.success) {
 
 ---
 
-### 3. Get Subscription
+### 3. List subscriptions
 
-Retrieve current subscription details for the authenticated user.
+List active/trialing subscriptions for the authenticated user (or by optional referenceId).
 
-**Endpoint:** `GET /api/auth/razorpay/get-subscription`
+**Endpoint:** `GET /api/auth/razorpay/subscription/list`
 
 **Authentication:** Required (uses `sessionMiddleware`)
+
+**Query:** `referenceId?` (optional; default: current user)
 
 **Response:**
 
 ```typescript
 {
   success: true,
-  data: RazorpaySubscription | null  // null if no subscription
+  data: SubscriptionRecord[]  // Array of subscription records
 }
 ```
 
@@ -492,13 +493,13 @@ Retrieve current subscription details for the authenticated user.
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-// Using Better Auth client
-const response = await authClient.api.get('/razorpay/get-subscription')
-
-if (response.success && response.data) {
-  console.log('Subscription status:', response.data.status)
-  console.log('Plan ID:', response.data.plan_id)
-  console.log('Cancel at period end:', response.data.cancel_at_period_end)
+// Prefer: use authClient.razorpay (requires razorpayClientPlugin() in createAuthClient)
+const result = await authClient.razorpay.listSubscriptions()
+if (result.success && result.data.length) {
+  const subscription = result.data[0]
+  console.log('Subscription status:', subscription.status)
+  console.log('Plan:', subscription.plan)
+  console.log('Cancel at period end:', subscription.cancelAtPeriodEnd)
 }
 ```
 
@@ -533,9 +534,11 @@ Verify payment signature after Razorpay checkout completion. This endpoint is **
 {
   success: true,
   data: {
-    message: 'Payment verified successfully',
+    message: string,
     payment_id: string,
-    subscription_id: string
+    subscription_id: string,
+    amount: number,    // Paisa (e.g. 29900 = ₹299.00)
+    currency?: string // e.g. INR, USD
   }
 }
 ```
@@ -545,18 +548,16 @@ Verify payment signature after Razorpay checkout completion. This endpoint is **
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-// After Razorpay checkout success callback
+// After Razorpay checkout success callback — use authClient.razorpay.verifyPayment
 const handlePaymentSuccess = async (razorpayResponse: {
   razorpay_payment_id: string
   razorpay_subscription_id: string
   razorpay_signature: string
 }) => {
-  const response = await authClient.api.post('/razorpay/verify-payment', {
-    body: razorpayResponse,
-  })
-
-  if (response.success) {
-    console.log('Payment verified:', response.data.message)
+  const result = await authClient.razorpay.verifyPayment(razorpayResponse)
+  if (result.success) {
+    console.log('Payment verified:', result.data.message)
+    // result.data.amount (paisa), result.data.currency, etc.
     // Redirect to success page
   }
 }
@@ -595,19 +596,17 @@ Pause an active subscription.
 }
 ```
 
-**Client Usage:**
+**Client Usage:** The client plugin does not expose a dedicated pause method. Use `fetch` to call the endpoint if your server implements it:
 
 ```typescript
-import { authClient } from '@/lib/auth-client'
-
-const response = await authClient.api.post('/razorpay/pause-subscription', {
-  body: {
-    subscription_id: 'sub_1234567890',
-  },
+const response = await fetch('/api/auth/razorpay/pause-subscription', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ subscription_id: 'sub_1234567890' }),
 })
-
-if (response.success) {
-  console.log('Subscription paused:', response.data.status)
+const result = await response.json()
+if (result.success) {
+  console.log('Subscription paused:', result.data.status)
 }
 ```
 
@@ -617,11 +616,11 @@ if (response.success) {
 
 ---
 
-### 6. Resume Subscription
+### 6. Restore subscription
 
-Resume a paused subscription.
+Restore a subscription that was scheduled to cancel, or resume a paused Razorpay subscription.
 
-**Endpoint:** `POST /api/auth/razorpay/resume-subscription`
+**Endpoint:** `POST /api/auth/razorpay/subscription/restore`
 
 **Authentication:** Required (uses `sessionMiddleware`)
 
@@ -629,7 +628,7 @@ Resume a paused subscription.
 
 ```typescript
 {
-  subscription_id: string  // Required: Subscription ID
+  subscriptionId: string  // Required: Local subscription ID
 }
 ```
 
@@ -638,23 +637,20 @@ Resume a paused subscription.
 ```typescript
 {
   success: true,
-  data: RazorpaySubscription
+  data: { id: string; status: string }
 }
 ```
 
-**Client Usage:**
+**Client Usage:** Restore a subscription that was scheduled to cancel. Use **`authClient.razorpay.restoreSubscription`** (body uses local subscription ID):
 
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-const response = await authClient.api.post('/razorpay/resume-subscription', {
-  body: {
-    subscription_id: 'sub_1234567890',
-  },
+const result = await authClient.razorpay.restoreSubscription({
+  subscriptionId: 'local_sub_id_or_razorpay_sub_id',
 })
-
-if (response.success) {
-  console.log('Subscription resumed:', response.data.status)
+if (result.success) {
+  console.log('Subscription restored:', result.data.status)
 }
 ```
 
@@ -669,7 +665,7 @@ if (response.success) {
 
 Cancel a subscription at the end of the current billing period.
 
-**Endpoint:** `POST /api/auth/razorpay/cancel-subscription`
+**Endpoint:** `POST /api/auth/razorpay/subscription/cancel`
 
 **Authentication:** Required (uses `sessionMiddleware`)
 
@@ -677,7 +673,8 @@ Cancel a subscription at the end of the current billing period.
 
 ```typescript
 {
-  subscription_id: string  // Required: Subscription ID
+  subscriptionId: string   // Required: Local subscription ID (or Razorpay subscription ID)
+  immediately?: boolean    // Optional: Cancel now vs at period end (default: false)
 }
 ```
 
@@ -686,25 +683,23 @@ Cancel a subscription at the end of the current billing period.
 ```typescript
 {
   success: true,
-  data: RazorpaySubscription
+  data: { id: string; status: string; plan_id: string; current_end?: number; ended_at?: number | null }
 }
 ```
 
-**Note:** This cancels the subscription at period end, not immediately. The subscription remains active until the current billing period ends.
+**Note:** By default this cancels at period end. Set `immediately: true` to cancel now.
 
 **Client Usage:**
 
 ```typescript
 import { authClient } from '@/lib/auth-client'
 
-const response = await authClient.api.post('/razorpay/cancel-subscription', {
-  body: {
-    subscription_id: 'sub_1234567890',
-  },
+const result = await authClient.razorpay.cancelSubscription({
+  subscriptionId: 'local_sub_id_or_razorpay_sub_id',
+  immediately: false,
 })
-
-if (response.success) {
-  console.log('Subscription will cancel at period end')
+if (result.success) {
+  console.log('Subscription will cancel at period end:', result.data.status)
 }
 ```
 
@@ -1135,12 +1130,13 @@ All endpoints return errors in a consistent format:
 import { authClient } from '@/lib/auth-client'
 
 try {
-  const response = await authClient.api.post('/razorpay/subscribe', {
-    body: { plan_id: 'plan_123' },
+  const result = await authClient.razorpay.createOrUpdateSubscription({
+    plan: 'plan_123',
+    annual: false,
   })
 
-  if (!response.success) {
-    switch (response.error.code) {
+  if (!result.success) {
+    switch (result.error.code) {
       case 'PLAN_NOT_FOUND':
         toast.error('Plan not available')
         break
@@ -1148,13 +1144,13 @@ try {
         toast.error('You already have an active subscription')
         break
       default:
-        toast.error(response.error.description)
+        toast.error(result.error.description)
     }
     return
   }
 
   // Handle success
-  window.location.href = response.data.short_url
+  if (result.data.checkoutUrl) window.location.href = result.data.checkoutUrl
 } catch (error) {
   console.error('Network error:', error)
   toast.error('Network error. Please try again.')
@@ -1170,30 +1166,31 @@ import { authClient } from '@/lib/auth-client'
 
 async function handleSubscriptionFlow() {
   // 1. Get available plans
-  const plansResponse = await authClient.api.get('/razorpay/get-plans')
-  if (!plansResponse.success) {
+  const plansResult = await authClient.razorpay.getPlans()
+  if (!plansResult.success) {
     console.error('Failed to fetch plans')
     return
   }
 
-  const plans = plansResponse.data
+  const plans = plansResult.data
   const selectedPlan = plans[0]
 
   // 2. Create subscription
-  const subscribeResponse = await authClient.api.post('/razorpay/subscribe', {
-    body: {
-      plan_id: selectedPlan.id,
-      total_count: 12,
-    },
+  const subscribeResult = await authClient.razorpay.createOrUpdateSubscription({
+    plan: selectedPlan.name,
+    annual: false,
+    seats: 1,
   })
 
-  if (!subscribeResponse.success) {
-    console.error('Failed to create subscription:', subscribeResponse.error)
+  if (!subscribeResult.success) {
+    console.error('Failed to create subscription:', subscribeResult.error)
     return
   }
 
-  // 3. Redirect to Razorpay checkout
-  window.location.href = subscribeResponse.data.short_url
+  // 3. Redirect to Razorpay checkout (or use embed + openRazorpaySubscriptionCheckout)
+  if (subscribeResult.data.checkoutUrl) {
+    window.location.href = subscribeResult.data.checkoutUrl
+  }
 
   // 4. After payment, verify payment (in Razorpay success handler)
   // This is handled in the Razorpay checkout callback
@@ -1205,9 +1202,7 @@ function handleRazorpaySuccess(response: {
   razorpay_subscription_id: string
   razorpay_signature: string
 }) {
-  authClient.api.post('/razorpay/verify-payment', {
-    body: response,
-  }).then((result) => {
+  authClient.razorpay.verifyPayment(response).then((result) => {
     if (result.success) {
       // Redirect to success page
       window.location.href = '/subscription/success'
@@ -1222,98 +1217,71 @@ function handleRazorpaySuccess(response: {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { authClient } from '@/lib/auth-client'
 
-// Get plans
+// Get plans — use authClient.razorpay.getPlans()
 export function usePlans() {
   return useQuery({
     queryKey: ['razorpay', 'plans'],
     queryFn: async () => {
-      const response = await authClient.api.get('/razorpay/get-plans')
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
+      const result = await authClient.razorpay.getPlans()
+      if (!result.success) throw new Error(result.error.description)
+      return result.data
     },
   })
 }
 
-// Get subscription
-export function useSubscription() {
+// List subscriptions — use authClient.razorpay.listSubscriptions()
+export function useSubscriptions() {
   return useQuery({
-    queryKey: ['razorpay', 'subscription'],
+    queryKey: ['razorpay', 'subscriptions'],
     queryFn: async () => {
-      const response = await authClient.api.get('/razorpay/get-subscription')
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
+      const result = await authClient.razorpay.listSubscriptions()
+      if (!result.success) throw new Error(result.error.description)
+      return result.data
     },
   })
 }
 
-// Subscribe
-export function useSubscribe() {
+// Create or update subscription — use authClient.razorpay.createOrUpdateSubscription()
+export function useCreateOrUpdateSubscription() {
   const queryClient = useQueryClient()
-  
   return useMutation({
-    mutationFn: async (planId: string) => {
-      const response = await authClient.api.post('/razorpay/subscribe', {
-        body: { plan_id: planId },
-      })
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
+    mutationFn: async (input: { plan: string; annual?: boolean; seats?: number }) => {
+      const result = await authClient.razorpay.createOrUpdateSubscription(input)
+      if (!result.success) throw new Error(result.error.description)
+      return result.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscription'] })
+      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscriptions'] })
     },
   })
 }
 
-// Cancel subscription
+// Cancel subscription — use authClient.razorpay.cancelSubscription()
 export function useCancelSubscription() {
   const queryClient = useQueryClient()
-  
   return useMutation({
-    mutationFn: async (subscriptionId: string) => {
-      const response = await authClient.api.post('/razorpay/cancel-subscription', {
-        body: { subscription_id: subscriptionId },
-      })
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
+    mutationFn: async (input: { subscriptionId: string; immediately?: boolean }) => {
+      const result = await authClient.razorpay.cancelSubscription(input)
+      if (!result.success) throw new Error(result.error.description)
+      return result.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscription'] })
+      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscriptions'] })
     },
   })
 }
 
-// Pause subscription
-export function usePauseSubscription() {
+// Restore subscription — use authClient.razorpay.restoreSubscription()
+export function useRestoreSubscription() {
   const queryClient = useQueryClient()
-  
   return useMutation({
-    mutationFn: async (subscriptionId: string) => {
-      const response = await authClient.api.post('/razorpay/pause-subscription', {
-        body: { subscription_id: subscriptionId },
-      })
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
+    mutationFn: async (input: { subscriptionId: string }) => {
+      const result = await authClient.razorpay.restoreSubscription(input)
+      if (!result.success) throw new Error(result.error.description)
+      return result.data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscription'] })
-    },
-  })
-}
-
-// Resume subscription
-export function useResumeSubscription() {
-  const queryClient = useQueryClient()
-  
-  return useMutation({
-    mutationFn: async (subscriptionId: string) => {
-      const response = await authClient.api.post('/razorpay/resume-subscription', {
-        body: { subscription_id: subscriptionId },
-      })
-      if (!response.success) throw new Error(response.error.description)
-      return response.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscription'] })
+      queryClient.invalidateQueries({ queryKey: ['razorpay', 'subscriptions'] })
     },
   })
 }
@@ -1324,29 +1292,31 @@ export function useResumeSubscription() {
 ```typescript
 'use client'
 
-import { usePlans, useSubscription, useSubscribe, useCancelSubscription } from '@/hooks/use-razorpay'
+import { usePlans, useSubscriptions, useCreateOrUpdateSubscription, useCancelSubscription } from '@/hooks/use-razorpay'
 
 export function SubscriptionPage() {
   const { data: plans, isLoading: plansLoading } = usePlans()
-  const { data: subscription, isLoading: subLoading } = useSubscription()
-  const subscribe = useSubscribe()
+  const { data: subscriptions, isLoading: subLoading } = useSubscriptions()
+  const createOrUpdate = useCreateOrUpdateSubscription()
   const cancel = useCancelSubscription()
 
-  const handleSubscribe = async (planId: string) => {
+  const handleSubscribe = async (planName: string) => {
     try {
-      const subscription = await subscribe.mutateAsync(planId)
-      // Redirect to Razorpay checkout
-      window.location.href = subscription.short_url
+      const result = await createOrUpdate.mutateAsync({ plan: planName, annual: false })
+      if (result.checkoutUrl) window.location.href = result.checkoutUrl
+      // Or use result.razorpaySubscriptionId with openRazorpaySubscriptionCheckout when embed: true
     } catch (error) {
       console.error('Failed to create subscription:', error)
       // Handle error (show toast, etc.)
     }
   }
 
+  const subscription = subscriptions?.[0]
+
   const handleCancel = async () => {
     if (!subscription) return
     try {
-      await cancel.mutateAsync(subscription.id)
+      await cancel.mutateAsync({ subscriptionId: subscription.id })
       alert('Subscription will be cancelled at period end')
     } catch (error) {
       console.error('Failed to cancel subscription:', error)
@@ -1363,8 +1333,8 @@ export function SubscriptionPage() {
         <div>
           <h2>Current Subscription</h2>
           <p>Status: {subscription.status}</p>
-          <p>Plan: {subscription.plan_id}</p>
-          {subscription.cancel_at_period_end && (
+          <p>Plan: {subscription.plan}</p>
+          {subscription.cancelAtPeriodEnd && (
             <p className="text-warning">Will cancel at period end</p>
           )}
           <button 
@@ -1378,14 +1348,14 @@ export function SubscriptionPage() {
         <div>
           <h2>Select a Plan</h2>
           {plans?.map((plan) => (
-            <div key={plan.id}>
-              <h3>{plan.name || plan.id}</h3>
-              <p>₹{plan.amount / 100}/month</p>
+            <div key={plan.name}>
+              <h3>{plan.name}</h3>
+              <p>{plan.monthly ? `₹${plan.monthly.amount / 100}/month` : ''}</p>
               <button 
-                onClick={() => handleSubscribe(plan.id)}
-                disabled={subscribe.isPending}
+                onClick={() => handleSubscribe(plan.name)}
+                disabled={createOrUpdate.isPending}
               >
-                {subscribe.isPending ? 'Processing...' : 'Subscribe'}
+                {createOrUpdate.isPending ? 'Processing...' : 'Subscribe'}
               </button>
             </div>
           ))}
@@ -1415,17 +1385,12 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
       razorpay_subscription_id: string
       razorpay_signature: string
     }) {
-      // Verify payment
-      const verifyResponse = await authClient.api.post('/razorpay/verify-payment', {
-        body: response,
-      })
-
-      if (verifyResponse.success) {
-        // Redirect to success page
+      // Verify payment — use authClient.razorpay.verifyPayment()
+      const verifyResult = await authClient.razorpay.verifyPayment(response)
+      if (verifyResult.success) {
         window.location.href = '/subscription/success'
       } else {
-        // Handle error
-        console.error('Payment verification failed:', verifyResponse.error)
+        console.error('Payment verification failed:', verifyResult.error)
       }
     },
     prefill: {
