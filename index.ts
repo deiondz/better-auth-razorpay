@@ -125,6 +125,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
                       update: (p: unknown) => Promise<unknown>
                       create?: (p: unknown) => Promise<unknown>
                     }
+                    generateId?: (options: { model: string; size?: number }) => string | false
                   }
                   adapter?: {
                     update: (p: unknown) => Promise<unknown>
@@ -165,9 +166,8 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
                     const now = new Date()
                     const trialEnd = new Date(now.getTime() + trialOnSignUp.days * 24 * 60 * 60 * 1000)
                     const planName = trialOnSignUp.planName ?? 'Trial'
-                    const localId = `sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+                    // Let the adapter/DB generate the id (no id in data, no forceAllowId)
                     const subscriptionRecord = {
-                      id: localId,
                       plan: planName,
                       referenceId: user.id,
                       razorpayCustomerId: customer.id,
@@ -186,7 +186,6 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
                     await adapter.create({
                       model: 'subscription',
                       data: subscriptionRecord,
-                      forceAllowId: true,
                     } as Parameters<NonNullable<typeof adapter.create>>[0])
                   }
                 } catch (err) {

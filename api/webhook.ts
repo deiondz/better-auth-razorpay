@@ -54,16 +54,61 @@ function toLocalStatus(razorpayStatus: string): SubscriptionRecord['status'] {
   return map[razorpayStatus] ?? 'pending'
 }
 
+const WEBHOOK_DEBUG = process.env.NODE_ENV === 'development' || process.env.RAZORPAY_WEBHOOK_DEBUG === 'true'
+const log = (msg: string, data?: Record<string, unknown>) => {
+  if (WEBHOOK_DEBUG) {
+    const payload = data ? ` ${JSON.stringify(data)}` : ''
+    console.log(`[razorpay-webhook]${payload ? ` ${msg}` : msg}`, payload || '')
+  }
+}
+
 const updateSubscriptionRecord = async (
   adapter: WebhookAdapter,
   subscriptionRecordId: string,
+  whereField: string,
   data: Record<string, unknown>
 ): Promise<void> => {
-  await adapter.update({
+  const updateData = { ...data, updatedAt: new Date() }
+  const params = {
     model: 'subscription',
-    where: [{ field: 'id', value: subscriptionRecordId }],
-    update: { data: { ...data, updatedAt: new Date() } },
+    where: [{ field: whereField, value: subscriptionRecordId }],
+    update: { data: updateData },
+  }
+  log('updateSubscriptionRecord call', {
+    subscriptionRecordId,
+    whereField,
+    dataKeys: Object.keys(updateData),
   })
+  try {
+    await adapter.update(params)
+    log('updateSubscriptionRecord success', { subscriptionRecordId, whereField })
+  } catch (err) {
+    console.error('[razorpay-webhook] updateSubscriptionRecord failed', {
+      subscriptionRecordId,
+      whereField,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    })
+    throw err
+  }
+}
+
+/**
+ * Resolve primary key for update. Better Auth and adapters use the field name "id"; we prefer
+ * record.id. MongoDB: adapters should use mapKeysTransformOutput so _id is returned as "id". If
+ * the adapter returns raw docs with only _id (e.g. custom MongoDB without mapping for plugin
+ * models), we use _id for the where clause so the webhook update still works.
+ */
+function getSubscriptionPrimaryKey(
+  record: SubscriptionRecord & { _id?: string }
+): { value: string; field: string } {
+  if (record.id != null && record.id !== '') {
+    return { value: record.id, field: 'id' }
+  }
+  if (record._id != null && record._id !== '') {
+    return { value: record._id, field: '_id' }
+  }
+  return { value: '', field: 'id' }
 }
 
 const createStatusHandler = (
@@ -71,13 +116,21 @@ const createStatusHandler = (
   extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
 ): EventHandler =>
   async (adapter, _razorpaySubscriptionId, record, subscription) => {
+    const primaryKey = getSubscriptionPrimaryKey(record as SubscriptionRecord & { _id?: string })
+    if (!primaryKey.value) {
+      console.error('[razorpay-webhook] record has no id or _id', {
+        recordKeys: Object.keys(record),
+        razorpaySubscriptionId: record.razorpaySubscriptionId,
+      })
+      throw new Error('Subscription record has no primary key (id or _id)')
+    }
     const periodStart = subscription.current_start
       ? new Date(subscription.current_start * 1000)
       : null
     const periodEnd = subscription.current_end
       ? new Date(subscription.current_end * 1000)
       : null
-    await updateSubscriptionRecord(adapter, record.id, {
+    await updateSubscriptionRecord(adapter, primaryKey.value, primaryKey.field, {
       status,
       planId: subscription.plan_id,
       ...(periodStart !== null && { periodStart }),
@@ -210,9 +263,10 @@ async function processWebhookEvent(
     const record = (await adapter.findOne({
       model: 'subscription',
       where: [{ field: 'razorpaySubscriptionId', value: subscriptionEntity.id }],
-    })) as SubscriptionRecord | null
+    })) as (SubscriptionRecord & { _id?: string }) | null
 
     if (!record) {
+      log('record not found', { razorpaySubscriptionId: subscriptionEntity.id })
       return {
         success: false,
         message: isDev
@@ -220,6 +274,17 @@ async function processWebhookEvent(
           : 'Subscription record not found',
       }
     }
+
+    const primaryKey = getSubscriptionPrimaryKey(record)
+    log('record found', {
+      event,
+      razorpaySubscriptionId: subscriptionEntity.id,
+      recordId: primaryKey.value,
+      whereField: primaryKey.field,
+      hasId: 'id' in record && record.id != null,
+      has_id: '_id' in record && record._id != null,
+      status: record.status,
+    })
 
     const userId = record.referenceId
     if (!userId) {
@@ -237,7 +302,17 @@ async function processWebhookEvent(
       }
     }
 
-    await handler(adapter, subscriptionEntity.id, record, subscriptionEntity)
+    log('calling handler', { event, recordId: primaryKey.value })
+    try {
+      await handler(adapter, subscriptionEntity.id, record, subscriptionEntity)
+    } catch (handlerError) {
+      console.error('[razorpay-webhook] handler failed', {
+        event,
+        recordId: primaryKey.value,
+        error: handlerError instanceof Error ? handlerError.message : String(handlerError),
+      })
+      throw handlerError
+    }
 
     if (pluginOptions?.onEvent) {
       try {

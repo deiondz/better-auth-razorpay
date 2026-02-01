@@ -30,6 +30,13 @@ function toLocalStatus(razorpayStatus: string): SubscriptionRecord['status'] {
   return map[razorpayStatus] ?? 'pending'
 }
 
+/** Adapter may return id or _id (MongoDB); resolve primary key for where/response. */
+function getPrimaryKey(record: SubscriptionRecord & { _id?: string }): { value: string; field: string } {
+  if (record.id != null && record.id !== '') return { value: record.id, field: 'id' }
+  if (record._id != null && record._id !== '') return { value: record._id, field: '_id' }
+  return { value: '', field: 'id' }
+}
+
 /**
  * POST /api/auth/razorpay/subscription/create-or-update
  * Creates a new subscription or updates an existing one (plan/quantity).
@@ -112,16 +119,6 @@ export const createOrUpdateSubscription = (
         }
 
         const now = new Date()
-        const generateId = ctx.context.generateId as
-          | ((options: { model: string; size?: number }) => string | false)
-          | undefined
-        const generated =
-          typeof generateId === 'function'
-            ? generateId({ model: 'subscription' })
-            : undefined
-        const localId =
-          (typeof generated === 'string' ? generated : undefined) ??
-          `sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 
         // Update existing subscription (by local id)
         if (body.subscriptionId) {
@@ -217,8 +214,9 @@ export const createOrUpdateSubscription = (
         }
 
         if (subOpts.getSubscriptionCreateParams) {
+          const tempSubPk = appTrialSub ? getPrimaryKey(appTrialSub as SubscriptionRecord & { _id?: string }) : null
           const tempSub: SubscriptionRecord = {
-            id: appTrialSub?.id ?? '',
+            id: tempSubPk?.value ?? '',
             plan: plan.name,
             planId,
             referenceId: userId,
@@ -255,10 +253,17 @@ export const createOrUpdateSubscription = (
         const newStatus = toLocalStatus(rpSubscription.status)
 
         if (appTrialSub) {
+          const trialPk = getPrimaryKey(appTrialSub as SubscriptionRecord & { _id?: string })
+          if (!trialPk.value) {
+            return {
+              success: false,
+              error: { code: 'INVALID_TRIAL', description: 'Trial subscription has no primary key' },
+            }
+          }
           // Upgrade from app trial: update the existing record instead of creating a new one
           await ctx.context.adapter.update({
             model: 'subscription',
-            where: [{ field: 'id', value: appTrialSub.id }],
+            where: [{ field: trialPk.field, value: trialPk.value }],
             update: {
               data: {
                 plan: plan.name,
@@ -277,6 +282,7 @@ export const createOrUpdateSubscription = (
           if (subOpts.onSubscriptionCreated) {
             const updatedRecord: SubscriptionRecord = {
               ...appTrialSub,
+              id: trialPk.value,
               plan: plan.name,
               planId,
               razorpaySubscriptionId: rpSubscription.id,
@@ -299,7 +305,7 @@ export const createOrUpdateSubscription = (
             subscriptionId: string
             razorpaySubscriptionId: string
           } = {
-            subscriptionId: appTrialSub.id,
+            subscriptionId: trialPk.value,
             razorpaySubscriptionId: rpSubscription.id,
           }
           if (!body.embed) {
@@ -313,9 +319,8 @@ export const createOrUpdateSubscription = (
           return { success: true, data }
         }
 
-        // Create new subscription record
-        const subscriptionRecord: Omit<SubscriptionRecord, 'id'> & { id: string } = {
-          id: localId,
+        // Create new subscription record; let the adapter/DB generate the id (no id in data, no forceAllowId)
+        const subscriptionData: Omit<SubscriptionRecord, 'id'> = {
           plan: plan.name,
           planId,
           referenceId: userId,
@@ -333,16 +338,35 @@ export const createOrUpdateSubscription = (
           updatedAt: now,
         }
 
-        await ctx.context.adapter.create({
+        const createdRaw = await ctx.context.adapter.create({
           model: 'subscription',
-          data: subscriptionRecord,
-          forceAllowId: true,
+          data: subscriptionData,
         } as Parameters<typeof ctx.context.adapter.create>[0])
+        const created = createdRaw as (SubscriptionRecord & { _id?: unknown }) | null | undefined
+
+        let createdId: string | undefined
+        if (created != null) {
+          if (typeof (created as { id?: unknown }).id === 'string' && (created as { id: string }).id !== '') {
+            createdId = (created as { id: string }).id
+          } else if (typeof (created as { _id?: unknown })._id === 'string' && (created as { _id: string })._id !== '') {
+            createdId = (created as { _id: string })._id
+          } else if ((created as { _id?: unknown })._id != null) {
+            createdId = String((created as { _id: unknown })._id)
+          }
+        }
+        if (createdId == null || createdId === '') {
+          return {
+            success: false,
+            error: { code: 'CREATE_FAILED', description: 'Subscription record was created but no id was returned' },
+          }
+        }
+
+        const subscriptionRecord: SubscriptionRecord = { ...subscriptionData, id: createdId }
 
         if (subOpts.onSubscriptionCreated) {
           await subOpts.onSubscriptionCreated({
             razorpaySubscription: rpSubscription,
-            subscription: subscriptionRecord as SubscriptionRecord,
+            subscription: subscriptionRecord,
             plan,
           })
         }
@@ -352,7 +376,7 @@ export const createOrUpdateSubscription = (
           subscriptionId: string
           razorpaySubscriptionId: string
         } = {
-          subscriptionId: localId,
+          subscriptionId: createdId,
           razorpaySubscriptionId: rpSubscription.id,
         }
         if (!body.embed) {
