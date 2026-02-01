@@ -158,26 +158,130 @@ export const createOrUpdateSubscription = (
         }
 
         // One subscription per user at a time: block if they already have an active paid one (with Razorpay subscription).
-        // Status 'created' = subscription created but payment not completed — allow user to initialize payment (reuse or create).
+        // Status 'created' or 'pending' (authenticated) = not yet activated — allow user to complete payment (reuse or create).
         const existingSubs = (await ctx.context.adapter.findMany({
           model: 'subscription',
           where: [{ field: 'referenceId', value: userId }],
         })) as SubscriptionRecord[] | null
+        // Halted = all retries exhausted; user can create a new subscription (or manually retry the halted one via Razorpay).
         const blockIfActiveStatuses: SubscriptionRecord['status'][] = [
           'active',
           'trialing',
           'pending',
-          'halted',
         ]
         const subs = existingSubs ?? []
-        const activePaidSubs = subs.filter(
-          (s) => blockIfActiveStatuses.includes(s.status) && s.razorpaySubscriptionId
-        )
         const appTrialSubs = subs.filter(
           (s) => s.status === 'trialing' && !s.razorpaySubscriptionId
         )
         const appTrialSub = appTrialSubs.length === 1 ? appTrialSubs[0]! : null
 
+        // Reuse existing incomplete subscription (created or pending with Razorpay ID): fetch and return checkout URL if pre-activation.
+        const reusableSub = subs.find(
+          (s) =>
+            (s.status === 'created' || s.status === 'pending') &&
+            s.razorpaySubscriptionId
+        )
+        if (reusableSub?.razorpaySubscriptionId) {
+          const rpSub = (await razorpay.subscriptions.fetch(
+            reusableSub.razorpaySubscriptionId
+          )) as RazorpaySubscription
+          const rpStatus = (rpSub.status ?? '').toLowerCase()
+          const preActivationStatuses = ['created', 'authenticated', 'pending']
+          if (preActivationStatuses.includes(rpStatus)) {
+            const periodEnd = rpSub.current_end
+              ? new Date(rpSub.current_end * 1000)
+              : null
+            const data: {
+              checkoutUrl?: string | null
+              subscription: {
+                id: string
+                plan: string
+                planId: string | null
+                status: SubscriptionRecord['status']
+                razorpaySubscriptionId: string | null
+                cancelAtPeriodEnd: boolean
+                periodEnd: Date | null
+                seats: number
+              }
+              subscriptionId: string
+              razorpaySubscriptionId: string
+            } = {
+              subscription: {
+                id: reusableSub.id,
+                plan: reusableSub.plan,
+                planId: reusableSub.planId ?? null,
+                status: reusableSub.status,
+                razorpaySubscriptionId: reusableSub.razorpaySubscriptionId ?? null,
+                cancelAtPeriodEnd: reusableSub.cancelAtPeriodEnd ?? false,
+                periodEnd: periodEnd ?? reusableSub.periodEnd ?? null,
+                seats: reusableSub.seats ?? 1,
+              },
+              subscriptionId: reusableSub.id,
+              razorpaySubscriptionId: reusableSub.razorpaySubscriptionId,
+            }
+            if (!body.embed) data.checkoutUrl = rpSub.short_url
+            return { success: true, data }
+          }
+          if (rpStatus === 'active') {
+            const periodStart = rpSub.current_start
+              ? new Date(rpSub.current_start * 1000)
+              : null
+            const periodEnd = rpSub.current_end
+              ? new Date(rpSub.current_end * 1000)
+              : null
+            const data: {
+              checkoutUrl?: string | null
+              subscription: {
+                id: string
+                plan: string
+                planId: string | null
+                status: SubscriptionRecord['status']
+                razorpaySubscriptionId: string | null
+                cancelAtPeriodEnd: boolean
+                periodEnd: Date | null
+                seats: number
+              }
+            } = {
+              subscription: {
+                id: reusableSub.id,
+                plan: reusableSub.plan,
+                planId: reusableSub.planId ?? rpSub.plan_id ?? null,
+                status: 'active',
+                razorpaySubscriptionId: reusableSub.razorpaySubscriptionId ?? null,
+                cancelAtPeriodEnd: reusableSub.cancelAtPeriodEnd ?? false,
+                periodEnd: periodEnd ?? reusableSub.periodEnd ?? null,
+                seats: reusableSub.seats ?? 1,
+              },
+            }
+            if (!body.embed) data.checkoutUrl = rpSub.short_url
+            return { success: true, data }
+          }
+          if (['cancelled', 'completed', 'expired'].includes(rpStatus)) {
+            const newStatus = toLocalStatus(rpStatus)
+            const periodEnd = rpSub.current_end
+              ? new Date(rpSub.current_end * 1000)
+              : null
+            await ctx.context.adapter.update({
+              model: 'subscription',
+              where: [
+                { field: 'razorpaySubscriptionId', value: reusableSub.razorpaySubscriptionId },
+              ],
+              update: {
+                data: {
+                  status: newStatus,
+                  periodEnd: periodEnd ?? reusableSub.periodEnd,
+                  updatedAt: new Date(),
+                },
+              },
+            })
+            reusableSub.status = newStatus
+            if (periodEnd != null) reusableSub.periodEnd = periodEnd
+          }
+        }
+
+        const activePaidSubs = subs.filter(
+          (s) => blockIfActiveStatuses.includes(s.status) && s.razorpaySubscriptionId
+        )
         if (activePaidSubs.length > 0) {
           return {
             success: false,
@@ -186,52 +290,6 @@ export const createOrUpdateSubscription = (
               description: 'You already have an active subscription. Cancel or let it expire before creating another.',
             },
           }
-        }
-
-        // If user has an existing subscription with status 'created' and a Razorpay subscription ID, return its checkout URL so they can complete payment.
-        const createdSub = subs.find(
-          (s) => s.status === 'created' && s.razorpaySubscriptionId
-        )
-        if (createdSub?.razorpaySubscriptionId) {
-          const rpSub = (await razorpay.subscriptions.fetch(
-            createdSub.razorpaySubscriptionId
-          )) as RazorpaySubscription
-          const periodStart = rpSub.current_start
-            ? new Date(rpSub.current_start * 1000)
-            : null
-          const periodEnd = rpSub.current_end
-            ? new Date(rpSub.current_end * 1000)
-            : null
-          const data: {
-            checkoutUrl?: string | null
-            subscription: {
-              id: string
-              plan: string
-              planId: string | null
-              status: SubscriptionRecord['status']
-              razorpaySubscriptionId: string | null
-              cancelAtPeriodEnd: boolean
-              periodEnd: Date | null
-              seats: number
-            }
-            subscriptionId: string
-            razorpaySubscriptionId: string
-          } = {
-            subscription: {
-              id: createdSub.id,
-              plan: createdSub.plan,
-              planId: createdSub.planId ?? null,
-              status: createdSub.status,
-              razorpaySubscriptionId: createdSub.razorpaySubscriptionId ?? null,
-              cancelAtPeriodEnd: createdSub.cancelAtPeriodEnd ?? false,
-              periodEnd: periodEnd ?? createdSub.periodEnd ?? null,
-              seats: createdSub.seats ?? 1,
-            },
-            subscriptionId: createdSub.id,
-            razorpaySubscriptionId: createdSub.razorpaySubscriptionId,
-          }
-          if (!body.embed) data.checkoutUrl = rpSub.short_url
-          return { success: true, data }
         }
 
         // Plan validation only when creating a new subscription (not when reusing a created one). Always by plan_id.

@@ -35,7 +35,7 @@ The Razorpay plugin provides a subscription management solution aligned with the
 - ✅ **Webhook handling**: Subscription events (activated, cancelled, expired, etc.) with optional `onSubscriptionActivated`, `onSubscriptionCancel`, `onSubscriptionUpdate`, and global `onEvent`
 - ✅ **Authorization**: `authorizeReference` for list/create actions; `requireEmailVerification` for subscriptions
 - ✅ **Type safety**: Full TypeScript support with `SubscriptionRecord`, `RazorpayPlan`, and plugin options
-- ✅ **TanStack Query**: Works with TanStack Query; use our optional [pre-built hooks](#tanstack-query-hooks) or build your own hooks around `authClient.api` (GET/POST to the Razorpay endpoints).
+- ✅ **TanStack Query**: Works with TanStack Query; use our optional [pre-built hooks](#tanstack-query-hooks) or build your own hooks around the auth client's Razorpay namespace (`authClient.razorpay.*`).
 
 ## Installation
 
@@ -163,8 +163,7 @@ export const auth = betterAuth({
 
 3. **Add Client Plugin (required to avoid 404s)**
 
-Add the Razorpay client plugin so requests use the correct paths. **Without it, calls like `authClient.api.get('/razorpay/get-plans')` can hit wrong URLs (e.g. `POST /api/auth/api/get` 404).** The plugin exposes `authClient.razorpay.*` methods that use the plugin’s route map.
-
+Add the Razorpay client plugin so your auth client gets a Razorpay namespace. The plugin adds `authClient.razorpay.*` methods (e.g. `getPlans()`, `verifyPayment()`). Better Auth does not expose a generic `api` on the auth client—plugin routes are exposed as namespaces (e.g. `authClient.razorpay`). Use these so requests use the correct paths and avoid 404s.
 ```typescript
 // src/lib/auth-client.ts
 import { createAuthClient } from 'better-auth/react'
@@ -747,9 +746,9 @@ Handle Razorpay webhook events (automatically called by Razorpay).
 
 ## Client Usage
 
-### Preferred: authClient.razorpay.* (method-based API)
+### Auth client: use the Razorpay namespace
 
-When you add `razorpayClientPlugin()` to `createAuthClient({ plugins: [...] })`, the client gets `authClient.razorpay` with explicit methods. **Use these so requests hit the correct paths** (avoids 404s like `POST /api/auth/api/get`):
+The auth client from `createAuthClient()` is a single client. When you add `razorpayClientPlugin()` to `createAuthClient({ plugins: [...] })`, that same auth client gets a **`razorpay` namespace** with methods like `getPlans()`, `verifyPayment()`, etc. **Call `authClient.razorpay.*`** so requests hit the plugin's routes (avoids 404s):
 
 ```typescript
 import { authClient } from '@/lib/auth-client'
@@ -796,9 +795,9 @@ await authClient.razorpay.verifyPayment({
 })
 ```
 
-### Fallback: authClient.api (only if client plugin is not used)
+### Terminology
 
-If you do not add the client plugin, you can use `authClient.api.get/post` with the Razorpay paths. **This can lead to 404s** (e.g. `POST /api/auth/api/get`) depending on how your auth client resolves paths. Prefer adding the client plugin and using `authClient.razorpay.*` instead.
+Better Auth's `createAuthClient()` does **not** add a generic `api.get` / `api.post` to the auth client type. Plugin endpoints are exposed as **namespaces** on that same client (e.g. `authClient.razorpay`). For Razorpay, use **`authClient.razorpay.verifyPayment()`**, **`authClient.razorpay.getPlans()`**, etc. If you use a custom client that implements its own `api.get`/`api.post`, calling those with Razorpay paths can lead to 404s—prefer adding the client plugin and using `authClient.razorpay.*`.
 
 ### Type Safety
 
@@ -819,7 +818,7 @@ type User = typeof authClient.$Infer.Session.user
 
 ## TanStack Query Hooks
 
-The plugin works with **TanStack Query**. We provide optional pre-built hooks that get the auth client from React context; wrap your app once with **`<RazorpayAuthProvider client={authClient}>`** and use **`usePlans()`**, **`useSubscriptions()`**, etc. with **no client argument**. When you use `razorpayClientPlugin()`, the hooks call `authClient.razorpay.*` so requests hit the correct paths. If you prefer a different setup, use `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., or build your own hooks around those methods.
+The plugin works with **TanStack Query**. We provide optional pre-built hooks that receive the **auth client** from React context. Wrap your app once with **`<RazorpayAuthProvider client={authClient}>`** (the same auth client from `createAuthClient()`) and use **`usePlans()`**, **`useSubscriptions()`**, etc. with no client argument. The hooks call **`authClient.razorpay.*`** when the client has the Razorpay namespace. You can also call `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc. directly, or build your own hooks around those methods.
 
 To use our pre-built hooks, install peer dependencies:
 
@@ -828,7 +827,7 @@ npm install @tanstack/react-query react
 # or yarn / pnpm / bun
 ```
 
-Import from `@deiondz/better-auth-razorpay/hooks` and wrap your app with **`RazorpayAuthProvider`** so hooks can read the client from context:
+Import from `@deiondz/better-auth-razorpay/hooks` and wrap your app with **`RazorpayAuthProvider`** so hooks receive the auth client from context:
 
 ```tsx
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -1505,10 +1504,10 @@ async function initializeRazorpayCheckout(subscriptionId: string) {
 ### Common Issues
 
 **1. "POST /api/auth/api/get 404" or Razorpay requests returning 404**
-- Add the **client plugin** to your auth client: `createAuthClient({ plugins: [razorpayClientPlugin(), ...] })`
-- Use **method-based API** instead of `authClient.api.get/post`: call `authClient.razorpay.getPlans()`, `authClient.razorpay.createOrUpdateSubscription(...)`, etc., so requests use the plugin’s route map and hit the correct paths
-- Wrap your app with **`<RazorpayAuthProvider client={authClient}>`** so hooks get the client from context; use **`usePlans()`**, **`useSubscriptions()`**, etc. with no client argument
-- The TanStack hooks use `authClient.razorpay` when present, so they work correctly once the client plugin is added
+- Better Auth's auth client does not expose a generic `api`—plugin methods live on namespaces. Add the **client plugin**: `createAuthClient({ plugins: [razorpayClientPlugin(), ...] })` so the auth client gets the **`razorpay` namespace**.
+- Call **`authClient.razorpay.getPlans()`**, **`authClient.razorpay.verifyPayment()`**, **`authClient.razorpay.createOrUpdateSubscription(...)`**, etc. (these are part of the normal auth client under the `razorpay` namespace).
+- Wrap your app with **`<RazorpayAuthProvider client={authClient}>`** so hooks receive the same auth client; use **`usePlans()`**, **`useSubscriptions()`**, etc. with no client argument.
+- The TanStack hooks call `authClient.razorpay.*` when present, so they work once the client plugin is added.
 
 **For maintainers:** See [Razorpay plugin × Better Auth client (problem and solution)](docs/BETTER_AUTH_CLIENT_CONTEXT.md) for the 404/TypeScript root cause and plugin-side fixes.
 

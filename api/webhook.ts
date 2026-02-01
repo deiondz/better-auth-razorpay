@@ -18,6 +18,7 @@ interface SubscriptionEntity {
   status: string
   current_start?: number
   current_end?: number
+  quantity?: number
 }
 
 interface WebhookAdapter {
@@ -71,9 +72,22 @@ const STATUS_ORDER: Record<SubscriptionRecord['status'], number> = {
 
 function shouldUpdateStatus(
   currentStatus: SubscriptionRecord['status'],
-  newStatus: SubscriptionRecord['status']
+  newStatus: SubscriptionRecord['status'],
+  event?: string
 ): boolean {
+  // Terminal statuses: always accept
   if (['cancelled', 'completed', 'expired'].includes(newStatus)) return true
+  // subscription.authenticated (pending): only accept when current is created or pending (do not overwrite active)
+  if (event === 'subscription.authenticated') {
+    return currentStatus === 'created' || currentStatus === 'pending'
+  }
+  // subscription.pending / subscription.halted: allow overwriting active (charge failed / multiple failures)
+  if (event === 'subscription.pending' || event === 'subscription.halted') {
+    return !['cancelled', 'completed', 'expired'].includes(currentStatus)
+  }
+  // subscription.updated: always accept status from payload (plan/quantity/period changed)
+  if (event === 'subscription.updated') return true
+  // All other events: advance or same order
   const currentOrder = STATUS_ORDER[currentStatus] ?? 0
   const newOrder = STATUS_ORDER[newStatus] ?? 0
   return newOrder >= currentOrder
@@ -131,6 +145,7 @@ const updateSubscriptionRecord = async (
  * (e.g. subscription.authenticated after subscription.activated) don't overwrite "active" with "pending".
  */
 const createStatusHandler = (
+  event: string,
   status: SubscriptionRecord['status'],
   extraFields?: (sub: SubscriptionEntity) => Record<string, unknown>
 ): EventHandler =>
@@ -141,7 +156,7 @@ const createStatusHandler = (
     const periodEnd = subscription.current_end
       ? new Date(subscription.current_end * 1000)
       : null
-    const includeStatus = shouldUpdateStatus(record.status, status)
+    const includeStatus = shouldUpdateStatus(record.status, status, event)
     await updateSubscriptionRecord(
       adapter,
       razorpaySubscriptionId,
@@ -157,17 +172,39 @@ const createStatusHandler = (
   }
 
 const eventHandlers: Record<string, EventHandler> = {
-  'subscription.authenticated': createStatusHandler('pending'),
-  'subscription.activated': createStatusHandler('active'),
-  'subscription.charged': createStatusHandler('active', (sub) => ({
+  'subscription.authenticated': createStatusHandler('subscription.authenticated', 'pending'),
+  'subscription.activated': createStatusHandler('subscription.activated', 'active'),
+  'subscription.charged': createStatusHandler('subscription.charged', 'active', (sub) => ({
     periodEnd: sub.current_end ? new Date(sub.current_end * 1000) : undefined,
   })),
-  'subscription.cancelled': createStatusHandler('cancelled', () => ({ cancelAtPeriodEnd: false })),
-  'subscription.paused': createStatusHandler('halted'),
-  'subscription.resumed': createStatusHandler('active'),
-  'subscription.pending': createStatusHandler('pending'),
-  'subscription.halted': createStatusHandler('halted'),
-  'subscription.expired': createStatusHandler('expired'),
+  'subscription.cancelled': createStatusHandler('subscription.cancelled', 'cancelled', () => ({ cancelAtPeriodEnd: false })),
+  'subscription.paused': createStatusHandler('subscription.paused', 'halted'),
+  'subscription.resumed': createStatusHandler('subscription.resumed', 'active'),
+  'subscription.pending': createStatusHandler('subscription.pending', 'pending'),
+  'subscription.halted': createStatusHandler('subscription.halted', 'halted'),
+  'subscription.expired': createStatusHandler('subscription.expired', 'expired'),
+  'subscription.updated': (async (adapter, razorpaySubscriptionId, record, subscription) => {
+    const status = toLocalStatus(subscription.status)
+    const periodStart = subscription.current_start
+      ? new Date(subscription.current_start * 1000)
+      : null
+    const periodEnd = subscription.current_end
+      ? new Date(subscription.current_end * 1000)
+      : null
+    const includeStatus = shouldUpdateStatus(record.status, status, 'subscription.updated')
+    await updateSubscriptionRecord(
+      adapter,
+      razorpaySubscriptionId,
+      'razorpaySubscriptionId',
+      {
+        ...(includeStatus && { status }),
+        planId: subscription.plan_id,
+        ...(periodStart !== null && { periodStart }),
+        ...(periodEnd !== null && { periodEnd }),
+        ...(subscription.quantity != null && { seats: subscription.quantity }),
+      }
+    )
+  }) as EventHandler,
 }
 
 const getRawBody = async (request: Request | undefined, fallbackBody: unknown): Promise<string> => {
