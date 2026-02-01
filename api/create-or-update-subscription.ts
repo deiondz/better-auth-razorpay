@@ -173,21 +173,21 @@ export const createOrUpdateSubscription = (
           }
         }
 
-        // One subscription per user at a time: block if they already have an active paid one (with Razorpay subscription)
+        // One subscription per user at a time: block if they already have an active paid one (with Razorpay subscription).
+        // Status 'created' = subscription created but payment not completed — allow user to initialize payment (reuse or create).
         const existingSubs = (await ctx.context.adapter.findMany({
           model: 'subscription',
           where: [{ field: 'referenceId', value: userId }],
         })) as SubscriptionRecord[] | null
-        const activeStatuses: SubscriptionRecord['status'][] = [
+        const blockIfActiveStatuses: SubscriptionRecord['status'][] = [
           'active',
           'trialing',
           'pending',
-          'created',
           'halted',
         ]
         const subs = existingSubs ?? []
         const activePaidSubs = subs.filter(
-          (s) => activeStatuses.includes(s.status) && s.razorpaySubscriptionId
+          (s) => blockIfActiveStatuses.includes(s.status) && s.razorpaySubscriptionId
         )
         const appTrialSubs = subs.filter(
           (s) => s.status === 'trialing' && !s.razorpaySubscriptionId
@@ -202,6 +202,52 @@ export const createOrUpdateSubscription = (
               description: 'You already have an active subscription. Cancel or let it expire before creating another.',
             },
           }
+        }
+
+        // If user has an existing subscription with status 'created' and a Razorpay subscription ID, return its checkout URL so they can complete payment.
+        const createdSub = subs.find(
+          (s) => s.status === 'created' && s.razorpaySubscriptionId
+        )
+        if (createdSub?.razorpaySubscriptionId) {
+          const rpSub = (await razorpay.subscriptions.fetch(
+            createdSub.razorpaySubscriptionId
+          )) as RazorpaySubscription
+          const periodStart = rpSub.current_start
+            ? new Date(rpSub.current_start * 1000)
+            : null
+          const periodEnd = rpSub.current_end
+            ? new Date(rpSub.current_end * 1000)
+            : null
+          const data: {
+            checkoutUrl?: string | null
+            subscription: {
+              id: string
+              plan: string
+              planId: string | null
+              status: SubscriptionRecord['status']
+              razorpaySubscriptionId: string | null
+              cancelAtPeriodEnd: boolean
+              periodEnd: Date | null
+              seats: number
+            }
+            subscriptionId: string
+            razorpaySubscriptionId: string
+          } = {
+            subscription: {
+              id: createdSub.id,
+              plan: createdSub.plan,
+              planId: createdSub.planId ?? null,
+              status: createdSub.status,
+              razorpaySubscriptionId: createdSub.razorpaySubscriptionId ?? null,
+              cancelAtPeriodEnd: createdSub.cancelAtPeriodEnd ?? false,
+              periodEnd: periodEnd ?? createdSub.periodEnd ?? null,
+              seats: createdSub.seats ?? 1,
+            },
+            subscriptionId: createdSub.id,
+            razorpaySubscriptionId: createdSub.razorpaySubscriptionId,
+          }
+          if (!body.embed) data.checkoutUrl = rpSub.short_url
+          return { success: true, data }
         }
 
         const totalCount = body.annual ? 1 : 12
