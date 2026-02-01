@@ -178,6 +178,7 @@ const eventHandlers: Record<string, EventHandler> = {
     periodEnd: sub.current_end ? new Date(sub.current_end * 1000) : undefined,
   })),
   'subscription.cancelled': createStatusHandler('subscription.cancelled', 'cancelled', () => ({ cancelAtPeriodEnd: false })),
+  'subscription.completed': createStatusHandler('subscription.completed', 'completed'),
   'subscription.paused': createStatusHandler('subscription.paused', 'halted'),
   'subscription.resumed': createStatusHandler('subscription.resumed', 'active'),
   'subscription.pending': createStatusHandler('subscription.pending', 'pending'),
@@ -393,7 +394,7 @@ async function processWebhookEvent(
             plan: { name: record.plan, monthlyPlanId: subscriptionEntity.plan_id },
           })
         } else if (
-          ['subscription.cancelled', 'subscription.expired'].includes(event) &&
+          ['subscription.cancelled', 'subscription.completed', 'subscription.expired'].includes(event) &&
           sub.onSubscriptionCancel
         ) {
           await sub.onSubscriptionCancel({

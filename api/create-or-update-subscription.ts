@@ -128,37 +128,59 @@ export const createOrUpdateSubscription = (
             ? ((await razorpay.subscriptions.fetch(existing.razorpaySubscriptionId)) as RazorpaySubscription)
             : null
           if (rpSub) {
-            const data: {
-              checkoutUrl?: string | null
-              subscription: {
-                id: string
-                plan: string
-                planId: string | null
-                status: SubscriptionRecord['status']
-                razorpaySubscriptionId: string | null
-                cancelAtPeriodEnd: boolean
-                periodEnd: Date | null
-                seats: number
+            const rpStatus = (rpSub.status ?? '').toLowerCase()
+            const terminalStatuses = ['cancelled', 'completed', 'expired']
+            if (terminalStatuses.includes(rpStatus)) {
+              // Existing subscription is already ended on Razorpay: sync local DB and allow creating a new one
+              const newStatus = toLocalStatus(rpStatus)
+              const periodEnd = rpSub.current_end
+                ? new Date(rpSub.current_end * 1000)
+                : existing.periodEnd
+              await ctx.context.adapter.update({
+                model: 'subscription',
+                where: [{ field: 'id', value: body.subscriptionId! }],
+                update: {
+                  data: {
+                    status: newStatus,
+                    periodEnd: periodEnd ?? existing.periodEnd,
+                    updatedAt: new Date(),
+                  },
+                },
+              })
+              // Fall through to create new subscription (do not return)
+            } else {
+              const data: {
+                checkoutUrl?: string | null
+                subscription: {
+                  id: string
+                  plan: string
+                  planId: string | null
+                  status: SubscriptionRecord['status']
+                  razorpaySubscriptionId: string | null
+                  cancelAtPeriodEnd: boolean
+                  periodEnd: Date | null
+                  seats: number
+                }
+              } = {
+                subscription: {
+                  id: existing.id,
+                  plan: existing.plan,
+                  planId: existing.planId ?? null,
+                  status: existing.status,
+                  razorpaySubscriptionId: existing.razorpaySubscriptionId ?? null,
+                  cancelAtPeriodEnd: existing.cancelAtPeriodEnd ?? false,
+                  periodEnd: existing.periodEnd ?? null,
+                  seats: existing.seats ?? 1,
+                },
               }
-            } = {
-              subscription: {
-                id: existing.id,
-                plan: existing.plan,
-                planId: existing.planId ?? null,
-                status: existing.status,
-                razorpaySubscriptionId: existing.razorpaySubscriptionId ?? null,
-                cancelAtPeriodEnd: existing.cancelAtPeriodEnd ?? false,
-                periodEnd: existing.periodEnd ?? null,
-                seats: existing.seats ?? 1,
-              },
+              if (!body.embed) data.checkoutUrl = rpSub.short_url
+              return { success: true, data }
             }
-            if (!body.embed) data.checkoutUrl = rpSub.short_url
-            return { success: true, data }
           }
         }
 
-        // One subscription per user at a time: block if they already have an active paid one (with Razorpay subscription).
-        // Status 'created' or 'pending' (authenticated) = not yet activated — allow user to complete payment (reuse or create).
+        // One subscription per user at a time: block only if they have an active/trialing/pending paid one.
+        // Completed, cancelled, expired: allow creating a new subscription.
         const existingSubs = (await ctx.context.adapter.findMany({
           model: 'subscription',
           where: [{ field: 'referenceId', value: userId }],
