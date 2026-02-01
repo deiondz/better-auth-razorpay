@@ -153,12 +153,16 @@ export interface VerifyPaymentInput {
   razorpay_signature: string
 }
 
-/** Response shape for verify-payment (success). */
+/** Response shape for verify-payment (success). Amount is in paisa (divide by 100 for display). */
 export interface VerifyPaymentResponse {
   success: true
   data: {
     message: string
     payment_id: string
     subscription_id: string
+    /** Payment amount in paisa (e.g. 29900 = ₹299.00). Use for success screen when verifying from redirect. */
+    amount: number
+    /** Currency code (e.g. INR, USD). */
+    currency?: string
   }
 }

@@ -105,7 +105,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
       'subscription/list': listSubscriptions({ subscription: subOpts }),
       'get-plans': getPlans(razorpay, { subscription: subOpts }),
       ...(razorpayKeySecret
-        ? { 'verify-payment': verifyPayment(razorpayKeySecret) }
+        ? { 'verify-payment': verifyPayment(razorpay, razorpayKeySecret) }
         : {}),
       webhook: webhook(razorpayWebhookSecret, options.onWebhookEvent ?? undefined, {
         subscription: subOpts,

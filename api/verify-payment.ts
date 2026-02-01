@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import type Razorpay from 'razorpay'
 import { createAuthEndpoint, sessionMiddleware } from 'better-auth/api'
 import {
   handleRazorpayError,
@@ -9,9 +10,10 @@ import {
 /**
  * POST /api/auth/razorpay/verify-payment
  * Verifies payment signature after Razorpay subscription checkout completion.
- * Requires razorpayKeySecret to be set in plugin options.
+ * Returns amount (in paisa) and currency from Razorpay so the success screen can display them (e.g. URL-return flow).
+ * Requires razorpayKeySecret and Razorpay client in plugin options.
  */
-export const verifyPayment = (keySecret: string) =>
+export const verifyPayment = (razorpay: Razorpay, keySecret: string) =>
   createAuthEndpoint(
     '/razorpay/verify-payment',
     { method: 'POST', use: [sessionMiddleware] },
@@ -72,12 +74,24 @@ export const verifyPayment = (keySecret: string) =>
           },
         })
 
+        let amount = 0
+        let currency: string | undefined
+        try {
+          const payment = await razorpay.payments.fetch(razorpay_payment_id) as { amount?: number; currency?: string }
+          if (payment && typeof payment.amount === 'number') amount = payment.amount
+          if (payment && typeof payment.currency === 'string') currency = payment.currency
+        } catch {
+          // Non-fatal: success screen can still show 0 / unknown currency
+        }
+
         return {
           success: true,
           data: {
             message: 'Payment verified successfully',
             payment_id: razorpay_payment_id,
             subscription_id: razorpay_subscription_id,
+            amount,
+            ...(currency != null && { currency }),
           },
         }
       } catch (error) {
