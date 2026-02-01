@@ -70,6 +70,17 @@ export interface PlanFreeTrial {
   onTrialEnd?: (args: { subscription: SubscriptionRecord }) => Promise<void>
 }
 
+/** Price details for a plan variant (from Razorpay Plan API). Amount is in smallest currency unit (e.g. paise, cents). */
+export interface PlanPriceDetail {
+  /** Amount in smallest currency unit (e.g. 89900 = ₹899.00, 1000 = $10.00). */
+  amount: number
+  currency: string
+  /** Billing period: daily | weekly | monthly | quarterly | yearly. */
+  period: string
+  /** Billing interval (e.g. 1 for every 1 month, 2 for every 2 months). */
+  interval?: number
+}
+
 /** Named plan with monthly/annual Razorpay plan IDs and optional trial. */
 export interface RazorpayPlan {
   name: string

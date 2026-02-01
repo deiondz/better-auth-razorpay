@@ -103,7 +103,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
       'subscription/cancel': cancelSubscription(razorpay),
       'subscription/restore': restoreSubscription(razorpay),
       'subscription/list': listSubscriptions({ subscription: subOpts }),
-      'get-plans': getPlans({ subscription: subOpts }),
+      'get-plans': getPlans(razorpay, { subscription: subOpts }),
       ...(razorpayKeySecret
         ? { 'verify-payment': verifyPayment(razorpayKeySecret) }
         : {}),

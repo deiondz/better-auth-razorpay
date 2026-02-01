@@ -2,7 +2,9 @@
  * Client-side types for Razorpay plugin hooks and API responses.
  */
 
-import type { SubscriptionRecord } from '../lib/types'
+import type { PlanPriceDetail, SubscriptionRecord } from '../lib/types'
+
+export type { PlanPriceDetail }
 
 /** Plan summary returned by GET /razorpay/get-plans (client-safe shape). */
 export interface PlanSummary {
@@ -12,6 +14,10 @@ export interface PlanSummary {
   description?: string
   limits?: Record<string, number>
   freeTrial?: { days: number }
+  /** Price for monthly plan (from Razorpay). Omitted if fetch failed or unavailable. */
+  monthly?: PlanPriceDetail
+  /** Price for annual plan (from Razorpay). Omitted if not configured or fetch failed. */
+  annual?: PlanPriceDetail
 }
 
 /** Response shape for get-plans (success). */

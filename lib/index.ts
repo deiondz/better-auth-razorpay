@@ -12,6 +12,7 @@ export type {
   OnWebhookEventCallback,
   PlanFreeTrial,
   PlanLimits,
+  PlanPriceDetail,
   RazorpayApiResponse,
   RazorpayErrorResponse,
   RazorpayPlan,

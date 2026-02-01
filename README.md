@@ -354,7 +354,7 @@ All endpoints are prefixed with `/api/auth/razorpay/` (or your configured `baseP
 | Cancel | `POST` | `subscription/cancel` | Cancel by local subscription ID. Body: `subscriptionId`, `immediately?`. |
 | Restore | `POST` | `subscription/restore` | Restore a subscription scheduled to cancel. Body: `subscriptionId`. |
 | List | `GET` | `subscription/list` | List active/trialing subscriptions. Query: `referenceId?` (default: current user). |
-| Get plans | `GET` | `get-plans` | Return configured plans (name, monthlyPlanId, annualPlanId, limits, freeTrial). |
+| Get plans | `GET` | `get-plans` | Return configured plans with price details (name, monthlyPlanId, annualPlanId, limits, freeTrial, monthly/annual amount, currency, period from Razorpay). |
 | Webhook | `POST` | `webhook` | Razorpay webhook URL; configure in Razorpay Dashboard. |
 
 ### 1. Get Plans
@@ -363,6 +363,8 @@ Retrieve all configured subscription plans (from plugin config; no Razorpay API 
 
 **Endpoint:** `GET /api/auth/razorpay/get-plans`
 
+Each plan in the response includes optional **price details** (`monthly`, `annual`) when available from Razorpay: `amount` (smallest currency unit, e.g. paise/cents), `currency`, `period` (e.g. monthly, yearly), and `interval`. Omitted if the plan fetch fails or the variant is not configured.
+
 **Authentication:** Not required (public endpoint)
 
 **Response:**
@@ -370,7 +372,7 @@ Retrieve all configured subscription plans (from plugin config; no Razorpay API 
 ```typescript
 {
   success: true,
-  data: Array<{ name: string; monthlyPlanId: string; annualPlanId?: string; limits?: Record<string, number>; freeTrial?: { days: number } }>
+  data: Array<{ name: string; monthlyPlanId: string; annualPlanId?: string; limits?: Record<string, number>; freeTrial?: { days: number }; monthly?: { amount: number; currency: string; period: string; interval?: number }; annual?: { amount: number; currency: string; period: string; interval?: number } }>
 }
 ```
 
