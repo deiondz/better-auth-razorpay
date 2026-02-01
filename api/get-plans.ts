@@ -26,6 +26,7 @@ export const getPlans = (options: Pick<RazorpayPluginOptions, 'subscription'>) =
           name: p.name,
           monthlyPlanId: p.monthlyPlanId,
           annualPlanId: p.annualPlanId,
+          description: p.description,
           limits: p.limits,
           freeTrial: p.freeTrial ? { days: p.freeTrial.days } : undefined,
         })),

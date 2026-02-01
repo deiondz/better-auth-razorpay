@@ -9,6 +9,7 @@ export interface PlanSummary {
   name: string
   monthlyPlanId: string
   annualPlanId?: string
+  description?: string
   limits?: Record<string, number>
   freeTrial?: { days: number }
 }
