@@ -65,6 +65,8 @@ function requireRazorpayOrApi(client: RazorpayAuthClient): void {
 export const razorpayQueryKeys = {
   all: ['razorpay'] as const,
   plans: () => [...razorpayQueryKeys.all, 'plans'] as const,
+  /** Prefix for all subscription list queries (use when invalidating after payment verified, etc.). */
+  subscriptionsList: () => [...razorpayQueryKeys.all, 'subscriptions'] as const,
   subscriptions: (referenceId?: string) =>
     [...razorpayQueryKeys.all, 'subscriptions', referenceId ?? 'me'] as const,
 }
@@ -338,7 +340,7 @@ export type UseVerifyPaymentOptions = UseMutationOptions<
 /**
  * Verify payment signature after Razorpay checkout success.
  * Call with the payload from the Razorpay success handler (razorpay_payment_id, razorpay_subscription_id, razorpay_signature).
- * Invalidates subscriptions list on success.
+ * Revalidates all subscription list queries on success.
  * Requires RazorpayAuthProvider above in the tree.
  */
 export function useVerifyPayment(options?: UseVerifyPaymentOptions) {
@@ -351,7 +353,7 @@ export function useVerifyPayment(options?: UseVerifyPaymentOptions) {
     },
     ...options,
     onSuccess: (data, variables, onMutateResult, context) => {
-      queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptions() })
+      queryClient.invalidateQueries({ queryKey: razorpayQueryKeys.subscriptionsList() })
       options?.onSuccess?.(data, variables, onMutateResult, context)
     },
   })
