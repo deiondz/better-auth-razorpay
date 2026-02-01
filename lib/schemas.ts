@@ -7,6 +7,8 @@ export const createOrUpdateSubscriptionSchema = z.object({
   subscriptionId: z.string().optional(),
   successUrl: z.string().url().optional(),
   disableRedirect: z.boolean().optional().default(false),
+  /** When true, checkout runs in-page via Razorpay modal; no checkoutUrl redirect. */
+  embed: z.boolean().optional().default(false),
 })
 
 export const cancelSubscriptionSchema = z.object({

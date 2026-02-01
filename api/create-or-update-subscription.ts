@@ -147,21 +147,54 @@ export const createOrUpdateSubscription = (
             ? ((await razorpay.subscriptions.fetch(existing.razorpaySubscriptionId)) as RazorpaySubscription)
             : null
           if (rpSub) {
-            return {
-              success: true,
-              data: {
-                checkoutUrl: rpSub.short_url,
-                subscription: {
-                  id: existing.id,
-                  plan: existing.plan,
-                  status: existing.status,
-                  razorpaySubscriptionId: existing.razorpaySubscriptionId,
-                  cancelAtPeriodEnd: existing.cancelAtPeriodEnd,
-                  periodEnd: existing.periodEnd,
-                  seats: existing.seats,
-                },
+            const data: {
+              checkoutUrl?: string | null
+              subscription: {
+                id: string
+                plan: string
+                status: SubscriptionRecord['status']
+                razorpaySubscriptionId: string | null
+                cancelAtPeriodEnd: boolean
+                periodEnd: Date | null
+                seats: number
+              }
+            } = {
+              subscription: {
+                id: existing.id,
+                plan: existing.plan,
+                status: existing.status,
+                razorpaySubscriptionId: existing.razorpaySubscriptionId ?? null,
+                cancelAtPeriodEnd: existing.cancelAtPeriodEnd ?? false,
+                periodEnd: existing.periodEnd ?? null,
+                seats: existing.seats ?? 1,
               },
             }
+            if (!body.embed) data.checkoutUrl = rpSub.short_url
+            return { success: true, data }
+          }
+        }
+
+        // One subscription per user at a time: block if they already have an active one
+        const existingSubs = (await ctx.context.adapter.findMany({
+          model: 'subscription',
+          where: [{ field: 'referenceId', value: userId }],
+        })) as SubscriptionRecord[] | null
+        const activeStatuses: SubscriptionRecord['status'][] = [
+          'active',
+          'trialing',
+          'pending',
+          'created',
+          'halted',
+        ]
+        const hasActiveSubscription =
+          (existingSubs ?? []).filter((s) => activeStatuses.includes(s.status)).length > 0
+        if (hasActiveSubscription) {
+          return {
+            success: false,
+            error: {
+              code: 'ALREADY_SUBSCRIBED',
+              description: 'You already have an active subscription. Cancel or let it expire before creating another.',
+            },
           }
         }
 
@@ -226,10 +259,12 @@ export const createOrUpdateSubscription = (
           updatedAt: now,
         }
 
+        // forceAllowId: allow id in data (Better Auth adapter rejects create with id otherwise)
         await ctx.context.adapter.create({
           model: 'subscription',
           data: subscriptionRecord,
-        })
+          forceAllowId: true,
+        } as Parameters<typeof ctx.context.adapter.create>[0])
 
         if (subOpts.onSubscriptionCreated) {
           await subOpts.onSubscriptionCreated({
@@ -239,20 +274,24 @@ export const createOrUpdateSubscription = (
           })
         }
 
-        const checkoutUrl = body.disableRedirect
-          ? rpSubscription.short_url
-          : body.successUrl
-            ? `${rpSubscription.short_url}?redirect=${encodeURIComponent(body.successUrl)}`
-            : rpSubscription.short_url
-
-        return {
-          success: true,
-          data: {
-            checkoutUrl,
-            subscriptionId: localId,
-            razorpaySubscriptionId: rpSubscription.id,
-          },
+        const data: {
+          checkoutUrl?: string | null
+          subscriptionId: string
+          razorpaySubscriptionId: string
+        } = {
+          subscriptionId: localId,
+          razorpaySubscriptionId: rpSubscription.id,
         }
+        if (!body.embed) {
+          data.checkoutUrl =
+            body.disableRedirect
+              ? rpSubscription.short_url
+              : body.successUrl
+                ? `${rpSubscription.short_url}?redirect=${encodeURIComponent(body.successUrl)}`
+                : rpSubscription.short_url
+        }
+
+        return { success: true, data }
       } catch (error) {
         return handleRazorpayError(error)
       }

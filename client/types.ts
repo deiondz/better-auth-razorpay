@@ -26,11 +26,12 @@ export interface ListSubscriptionsResponse {
   data: SubscriptionRecord[]
 }
 
-/** Response shape for create-or-update (success). */
+/** Response shape for create-or-update (success). When `embed: true`, checkoutUrl is omitted; use openRazorpaySubscriptionCheckout with razorpaySubscriptionId for in-page modal. */
 export interface CreateOrUpdateSubscriptionResponse {
   success: true
   data: {
-    checkoutUrl: string
+    /** Present when not using embed; omit when embed is true (use in-page modal instead). */
+    checkoutUrl?: string | null
     subscriptionId: string
     razorpaySubscriptionId: string
   }
@@ -119,6 +120,8 @@ export interface CreateOrUpdateSubscriptionInput {
   subscriptionId?: string
   successUrl?: string
   disableRedirect?: boolean
+  /** When true, checkout runs in-page via Razorpay modal; no redirect to checkoutUrl. */
+  embed?: boolean
 }
 
 /** Input for cancel subscription. */

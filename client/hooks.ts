@@ -224,7 +224,8 @@ export type UseCreateOrUpdateSubscriptionOptions = UseMutationOptions<
 >
 
 /**
- * Create or update a subscription. Returns checkoutUrl for Razorpay payment page.
+ * Create or update a subscription. With embed: true returns data for in-page modal (no checkoutUrl);
+ * use openRazorpaySubscriptionCheckout with razorpaySubscriptionId. Without embed, returns checkoutUrl for redirect.
  * Invalidates subscriptions list on success.
  * Requires RazorpayAuthProvider above in the tree.
  */
@@ -281,7 +282,7 @@ export type UseRestoreSubscriptionOptions = UseMutationOptions<
   unknown
 >
 
-// Re-export client types for convenience when importing from this entry
+// Re-export client types and in-page checkout helpers
 export type {
   RazorpayAuthClient,
   RazorpayClientActions,
@@ -300,6 +301,11 @@ export type {
   RazorpayApiError,
   RazorpayApiResult,
 } from './types'
+export {
+  loadRazorpayCheckoutScript,
+  openRazorpaySubscriptionCheckout,
+  type RazorpaySubscriptionCheckoutOptions,
+} from './checkout'
 
 /**
  * Restore a subscription that was scheduled to cancel at period end.

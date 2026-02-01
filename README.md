@@ -337,7 +337,7 @@ All endpoints are prefixed with `/api/auth/razorpay/` (or your configured `baseP
 
 | Action | Method | Endpoint | Description |
 |--------|--------|----------|-------------|
-| Create or update | `POST` | `subscription/create-or-update` | Start a subscription or update; returns `checkoutUrl` for Razorpay payment page. Body: `plan` (plan **name** or Razorpay plan ID `plan_*`), `annual?`, `seats?`, `subscriptionId?`, `successUrl?`, `disableRedirect?`. |
+| Create or update | `POST` | `subscription/create-or-update` | Start a subscription or update. With `embed: true` returns data for in-page modal (no redirect); otherwise returns `checkoutUrl`. Body: `plan` (plan **name** or Razorpay plan ID `plan_*`), `annual?`, `seats?`, `subscriptionId?`, `successUrl?`, `disableRedirect?`, `embed?`. |
 | Cancel | `POST` | `subscription/cancel` | Cancel by local subscription ID. Body: `subscriptionId`, `immediately?`. |
 | Restore | `POST` | `subscription/restore` | Restore a subscription scheduled to cancel. Body: `subscriptionId`. |
 | List | `GET` | `subscription/list` | List active/trialing subscriptions. Query: `referenceId?` (default: current user). |
@@ -734,14 +734,30 @@ if (plansRes.success) console.log(plansRes.data)
 // List subscriptions
 const listRes = await authClient.razorpay.listSubscriptions({ referenceId: 'optional' })
 
-// Create or update subscription (returns checkoutUrl for Razorpay payment page)
-// plan: use the plan name (e.g. 'Starter') or the Razorpay plan ID (e.g. 'plan_xxxxxxxxxxxx')
+// Create or update subscription
+// With embed: true — in-page modal (no redirect); use openRazorpaySubscriptionCheckout with razorpaySubscriptionId
+// Without embed — returns checkoutUrl for redirect
 const result = await authClient.razorpay.createOrUpdateSubscription({
   plan: 'Starter',
   annual: false,
   seats: 1,
+  embed: true, // keep user on your page; checkout opens as modal
 })
-if (result.success) window.location.href = result.data.checkoutUrl
+if (result.success && result.data.razorpaySubscriptionId) {
+  const { openRazorpaySubscriptionCheckout } = await import('@deiondz/better-auth-razorpay/hooks')
+  await openRazorpaySubscriptionCheckout({
+    key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
+    subscriptionId: result.data.razorpaySubscriptionId,
+    handler: async (res) => {
+      await authClient.razorpay.verifyPayment({
+        razorpay_payment_id: res.razorpay_payment_id,
+        razorpay_subscription_id: res.razorpay_subscription_id,
+        razorpay_signature: res.razorpay_signature,
+      })
+    },
+  })
+}
+// Or redirect: if (result.success && result.data.checkoutUrl) window.location.href = result.data.checkoutUrl
 
 // Cancel, restore, verify payment
 await authClient.razorpay.cancelSubscription({ subscriptionId: 'sub_xxx', immediately: false })
@@ -798,6 +814,8 @@ import {
   useCreateOrUpdateSubscription,
   useCancelSubscription,
   useRestoreSubscription,
+  useVerifyPayment,
+  openRazorpaySubscriptionCheckout,
   razorpayQueryKeys,
 } from '@deiondz/better-auth-razorpay/hooks'
 import type { CreateOrUpdateSubscriptionInput } from '@deiondz/better-auth-razorpay/hooks'
@@ -826,15 +844,31 @@ function SubscriptionUI() {
   const { data: subscriptions, isLoading: subsLoading } = useSubscriptions()
 
   const createOrUpdate = useCreateOrUpdateSubscription()
+  const verifyPayment = useVerifyPayment()
   const cancel = useCancelSubscription()
   const restore = useRestoreSubscription()
 
   const handleSubscribe = () => {
     createOrUpdate.mutate(
-      { plan: 'Starter', annual: false },
+      { plan: 'Starter', annual: false, embed: true }, // in-page modal, no redirect
       {
-        onSuccess: (data) => {
-          window.location.href = data.checkoutUrl // Redirect to Razorpay
+        onSuccess: async (data) => {
+          if (data.checkoutUrl) {
+            window.location.href = data.checkoutUrl // redirect flow
+            return
+          }
+          // In-page: open Razorpay modal on your site
+          await openRazorpaySubscriptionCheckout({
+            key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID!,
+            subscriptionId: data.razorpaySubscriptionId,
+            handler: (res) => {
+              verifyPayment.mutate({
+                razorpay_payment_id: res.razorpay_payment_id,
+                razorpay_subscription_id: res.razorpay_subscription_id,
+                razorpay_signature: res.razorpay_signature,
+              })
+            },
+          })
         },
       }
     )
@@ -877,7 +911,8 @@ function SubscriptionUI() {
 |------|------|-------------|
 | `usePlans(options?)` | `useQuery` | Fetches configured plans (GET `/razorpay/get-plans`). Requires `RazorpayAuthProvider` above in the tree. |
 | `useSubscriptions(input?, options?)` | `useQuery` | Lists active/trialing subscriptions (GET `/razorpay/subscription/list`). Optional `referenceId` in input or options. Requires `RazorpayAuthProvider`. |
-| `useCreateOrUpdateSubscription(options?)` | `useMutation` | Creates or updates subscription; returns `checkoutUrl`. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
+| `useCreateOrUpdateSubscription(options?)` | `useMutation` | Creates or updates subscription; with `embed: true` returns data for in-page modal (use `openRazorpaySubscriptionCheckout`); otherwise returns `checkoutUrl`. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
+| `useVerifyPayment(options?)` | `useMutation` | Verifies payment after Razorpay checkout success (in-page or redirect). Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
 | `useCancelSubscription(options?)` | `useMutation` | Cancels by local subscription ID; optional `immediately`. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
 | `useRestoreSubscription(options?)` | `useMutation` | Restores a subscription scheduled to cancel. Invalidates subscriptions list on success. Requires `RazorpayAuthProvider`. |
 
@@ -890,6 +925,16 @@ razorpayQueryKeys.plans()           // ['razorpay', 'plans']
 razorpayQueryKeys.subscriptions()   // ['razorpay', 'subscriptions', 'me']
 razorpayQueryKeys.subscriptions('user-id')  // ['razorpay', 'subscriptions', 'user-id']
 ```
+
+### In-page checkout (no redirect)
+
+To keep users on your site instead of redirecting to Razorpay’s hosted page:
+
+1. Call `createOrUpdateSubscription` with **`embed: true`**. The API will not return `checkoutUrl`; it will return `razorpaySubscriptionId`.
+2. Use **`openRazorpaySubscriptionCheckout`** from `@deiondz/better-auth-razorpay/hooks` with your Razorpay key ID and the returned `razorpaySubscriptionId`. This loads Razorpay Checkout.js and opens the payment form as a **modal on your page**.
+3. In the `handler` callback, call **`verifyPayment`** with `razorpay_payment_id`, `razorpay_subscription_id`, and `razorpay_signature` to verify and persist the payment.
+
+You can optionally call **`loadRazorpayCheckoutScript()`** earlier (e.g. on route load) so the script is ready when the user clicks Subscribe.
 
 ## Webhook Setup
 
