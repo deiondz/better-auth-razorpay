@@ -154,7 +154,7 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
                 await adapter.update({
                   model: 'user',
                   where: [{ field: 'id', value: user.id }],
-                  update: { razorpayCustomerId: customer.id },
+                  update: { data: { razorpayCustomerId: customer.id } },
                 })
                 if (onCustomerCreate) {
                   await onCustomerCreate({
