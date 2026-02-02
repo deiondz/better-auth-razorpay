@@ -54,14 +54,13 @@ export const restoreSubscription = (razorpay: Razorpay) =>
         // Razorpay: resume a paused subscription (or cancel scheduled cancellation)
         const subscription = await razorpay.subscriptions.resume(rpId)
 
+        // Flat update so adapters (e.g. MongoDB) set top-level fields; { data: {...} } would set a nested "data" field
         await ctx.context.adapter.update({
           model: 'subscription',
           where: [{ field: 'id', value: body.subscriptionId }],
           update: {
-            data: {
-              cancelAtPeriodEnd: false,
-              updatedAt: new Date(),
-            },
+            cancelAtPeriodEnd: false,
+            updatedAt: new Date(),
           },
         })
 

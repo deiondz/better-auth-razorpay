@@ -59,19 +59,15 @@ export const cancelSubscription = (razorpay: Razorpay) =>
         )) as RazorpaySubscription
 
 
-        const updated = await ctx.context.adapter.update({
+        // Flat update so adapters (e.g. MongoDB) set top-level fields; { data: {...} } would set a nested "data" field
+        await ctx.context.adapter.update({
           model: 'subscription',
           where: [{ field: 'id', value: body.subscriptionId }],
           update: {
-            data: {
-              cancelAtPeriodEnd: !body.immediately,
-              updatedAt: new Date(),
-            },
+            cancelAtPeriodEnd: !body.immediately,
+            updatedAt: new Date(),
           },
         })
-        console.log('subscription end of period', body.immediately)
-        console.log('subscription', body)
-        console.log('updated', updated)
         return {
           success: true,
           data: {
