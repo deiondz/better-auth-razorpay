@@ -58,6 +58,11 @@ export const cancelSubscription = (razorpay: Razorpay) =>
           !body.immediately
         )) as RazorpaySubscription
 
+        console.log('subscription', subscription)
+        console.log('body.immediately', body.immediately)
+        console.log('!body.immediately', !body.immediately)
+        console.log("body", body)
+
         await ctx.context.adapter.update({
           model: 'subscription',
           where: [{ field: 'razorpaySubscriptionId', value: body.subscriptionId }],
