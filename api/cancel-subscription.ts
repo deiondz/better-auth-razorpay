@@ -60,14 +60,10 @@ export const cancelSubscription = (razorpay: Razorpay) =>
 
         await ctx.context.adapter.update({
           model: 'subscription',
-          where: [{ field: 'id', value: body.subscriptionId }],
+          where: [{ field: 'razorpaySubscriptionId', value: body.subscriptionId }],
           update: {
             data: {
-              status: 'cancelled',
               cancelAtPeriodEnd: !body.immediately,
-              periodEnd: subscription.current_end
-                ? new Date(subscription.current_end * 1000)
-                : record.periodEnd,
               updatedAt: new Date(),
             },
           },

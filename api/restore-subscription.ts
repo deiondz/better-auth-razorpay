@@ -56,7 +56,7 @@ export const restoreSubscription = (razorpay: Razorpay) =>
 
         await ctx.context.adapter.update({
           model: 'subscription',
-          where: [{ field: 'id', value: body.subscriptionId }],
+          where: [{ field: 'razorpaySubscriptionId', value: body.subscriptionId }],
           update: {
             data: {
               cancelAtPeriodEnd: false,
