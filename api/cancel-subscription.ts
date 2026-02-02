@@ -58,14 +58,10 @@ export const cancelSubscription = (razorpay: Razorpay) =>
           !body.immediately
         )) as RazorpaySubscription
 
-        console.log('subscription', subscription)
-        console.log('body.immediately', body.immediately)
-        console.log('!body.immediately', !body.immediately)
-        console.log("body", body)
 
-        await ctx.context.adapter.update({
+        const updated = await ctx.context.adapter.update({
           model: 'subscription',
-          where: [{ field: 'razorpaySubscriptionId', value: body.subscriptionId }],
+          where: [{ field: 'id', value: body.subscriptionId }],
           update: {
             data: {
               cancelAtPeriodEnd: !body.immediately,
@@ -73,7 +69,7 @@ export const cancelSubscription = (razorpay: Razorpay) =>
             },
           },
         })
-
+        console.log('updated', updated)
         return {
           success: true,
           data: {
