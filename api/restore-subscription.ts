@@ -8,7 +8,10 @@ import {
 
 /**
  * POST /api/auth/razorpay/subscription/restore
- * Restores a subscription that was scheduled to cancel at period end.
+ * Restores a subscription by either:
+ * - Undoing "cancel at period end" (calls Razorpay cancel_scheduled_changes), or
+ * - Resuming a paused subscription (calls Razorpay resume).
+ * Razorpay "resume" is only for paused subscriptions; use cancelScheduledChanges to undo scheduled cancellation.
  */
 export const restoreSubscription = (razorpay: Razorpay) =>
   createAuthEndpoint(
@@ -51,8 +54,27 @@ export const restoreSubscription = (razorpay: Razorpay) =>
           }
         }
 
-        // Razorpay: resume a paused subscription (or cancel scheduled cancellation)
-        const subscription = await razorpay.subscriptions.resume(rpId)
+        // Razorpay: resume = paused → active only. Cancel-at-period-end = scheduled change; use cancelScheduledChanges.
+        let subscription: { id: string; status: string }
+        if (record.cancelAtPeriodEnd) {
+          // Undo "cancel at period end" via Razorpay Cancel an Update API
+          subscription = (await razorpay.subscriptions.cancelScheduledChanges(rpId)) as {
+            id: string
+            status: string
+          }
+        } else if (record.status === 'halted') {
+          // Resume a paused subscription
+          subscription = (await razorpay.subscriptions.resume(rpId)) as { id: string; status: string }
+        } else {
+          return {
+            success: false,
+            error: {
+              code: 'INVALID_STATE',
+              description:
+                'Subscription cannot be restored: it is not scheduled to cancel at period end and is not paused. Only active subscriptions with cancelAtPeriodEnd or halted (paused) subscriptions can be restored.',
+            },
+          }
+        }
 
         // Flat update so adapters (e.g. MongoDB) set top-level fields; { data: {...} } would set a nested "data" field
         await ctx.context.adapter.update({
@@ -67,8 +89,8 @@ export const restoreSubscription = (razorpay: Razorpay) =>
         return {
           success: true,
           data: {
-            id: (subscription as { id: string }).id,
-            status: (subscription as { status: string }).status,
+            id: subscription.id,
+            status: subscription.status,
           },
         }
       } catch (error) {
