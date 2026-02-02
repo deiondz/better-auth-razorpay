@@ -115,86 +115,86 @@ export const razorpayPlugin = (options: RazorpayPluginOptions) => {
 
     databaseHooks: createCustomerOnSignUp
       ? {
-          user: {
-            create: {
-              after: async (
-                user: RazorpayUserRecord & { id: string },
-                ctx: {
-                  context?: {
-                    adapter?: {
-                      update: (p: unknown) => Promise<unknown>
-                      create?: (p: unknown) => Promise<unknown>
-                    }
-                    generateId?: (options: { model: string; size?: number }) => string | false
-                  }
+        user: {
+          create: {
+            after: async (
+              user: RazorpayUserRecord & { id: string },
+              ctx: {
+                context?: {
                   adapter?: {
                     update: (p: unknown) => Promise<unknown>
                     create?: (p: unknown) => Promise<unknown>
                   }
-                  session?: unknown
+                  generateId?: (options: { model: string; size?: number }) => string | false
                 }
-              ) => {
-                const adapter = ctx.context?.adapter ?? (ctx as { adapter?: { update: (p: unknown) => Promise<unknown>; create?: (p: unknown) => Promise<unknown> } }).adapter
-                if (!adapter?.update) return
-                try {
-                  const params: { name?: string; email?: string; contact?: string; [key: string]: unknown } = {
-                    name: user.name ?? user.email ?? 'Customer',
-                    email: user.email ?? undefined,
-                  }
-                  if (getCustomerCreateParams) {
-                    const extra = await getCustomerCreateParams({
-                      user: user as RazorpayUserRecord,
-                      session: ctx.session,
-                    })
-                    if (extra?.params && typeof extra.params === 'object') {
-                      Object.assign(params, extra.params)
-                    }
-                  }
-                  const customer = await razorpay.customers.create(params)
-                  await adapter.update({
-                    model: 'user',
-                    where: [{ field: 'id', value: user.id }],
-                    update: { data: { razorpayCustomerId: customer.id } },
+                adapter?: {
+                  update: (p: unknown) => Promise<unknown>
+                  create?: (p: unknown) => Promise<unknown>
+                }
+                session?: unknown
+              }
+            ) => {
+              const adapter = ctx.context?.adapter ?? (ctx as { adapter?: { update: (p: unknown) => Promise<unknown>; create?: (p: unknown) => Promise<unknown> } }).adapter
+              if (!adapter?.update) return
+              try {
+                const params: { name?: string; email?: string; contact?: string;[key: string]: unknown } = {
+                  name: user.name ?? user.email ?? 'Customer',
+                  email: user.email ?? undefined,
+                }
+                if (getCustomerCreateParams) {
+                  const extra = await getCustomerCreateParams({
+                    user: user as RazorpayUserRecord,
+                    session: ctx.session,
                   })
-                  if (onCustomerCreate) {
-                    await onCustomerCreate({
-                      user: user as RazorpayUserRecord,
-                      razorpayCustomer: { id: customer.id, ...(customer as unknown as Record<string, unknown>) },
-                    })
+                  if (extra?.params && typeof extra.params === 'object') {
+                    Object.assign(params, extra.params)
                   }
-                  if (trialOnSignUp && typeof trialOnSignUp.days === 'number' && trialOnSignUp.days > 0 && adapter.create) {
-                    const now = new Date()
-                    const trialEnd = new Date(now.getTime() + trialOnSignUp.days * 24 * 60 * 60 * 1000)
-                    const planName = trialOnSignUp.planName ?? 'Trial'
-                    // Let the adapter/DB generate the id (no id in data, no forceAllowId)
-                    const subscriptionRecord = {
-                      plan: planName,
-                      referenceId: user.id,
-                      razorpayCustomerId: customer.id,
-                      razorpaySubscriptionId: null as string | null,
-                      status: 'trialing' as const,
-                      trialStart: now,
-                      trialEnd,
-                      periodStart: null as Date | null,
-                      periodEnd: null as Date | null,
-                      cancelAtPeriodEnd: false,
-                      seats: 1,
-                      groupId: null as string | null,
-                      createdAt: now,
-                      updatedAt: now,
-                    }
-                    await adapter.create({
-                      model: 'subscription',
-                      data: subscriptionRecord,
-                    } as Parameters<NonNullable<typeof adapter.create>>[0])
-                  }
-                } catch (err) {
-                  console.error('[better-auth-razorpay] Create customer on sign-up failed:', err)
                 }
-              },
+                const customer = await razorpay.customers.create(params)
+                await adapter.update({
+                  model: 'user',
+                  where: [{ field: 'id', value: user.id }],
+                  update: { razorpayCustomerId: customer.id },
+                })
+                if (onCustomerCreate) {
+                  await onCustomerCreate({
+                    user: user as RazorpayUserRecord,
+                    razorpayCustomer: { id: customer.id, ...(customer as unknown as Record<string, unknown>) },
+                  })
+                }
+                if (trialOnSignUp && typeof trialOnSignUp.days === 'number' && trialOnSignUp.days > 0 && adapter.create) {
+                  const now = new Date()
+                  const trialEnd = new Date(now.getTime() + trialOnSignUp.days * 24 * 60 * 60 * 1000)
+                  const planName = trialOnSignUp.planName ?? 'Trial'
+                  // Let the adapter/DB generate the id (no id in data, no forceAllowId)
+                  const subscriptionRecord = {
+                    plan: planName,
+                    referenceId: user.id,
+                    razorpayCustomerId: customer.id,
+                    razorpaySubscriptionId: null as string | null,
+                    status: 'trialing' as const,
+                    trialStart: now,
+                    trialEnd,
+                    periodStart: null as Date | null,
+                    periodEnd: null as Date | null,
+                    cancelAtPeriodEnd: false,
+                    seats: 1,
+                    groupId: null as string | null,
+                    createdAt: now,
+                    updatedAt: now,
+                  }
+                  await adapter.create({
+                    model: 'subscription',
+                    data: subscriptionRecord,
+                  } as Parameters<NonNullable<typeof adapter.create>>[0])
+                }
+              } catch (err) {
+                console.error('[better-auth-razorpay] Create customer on sign-up failed:', err)
+              }
             },
           },
-        }
+        },
+      }
       : undefined,
   }
 
