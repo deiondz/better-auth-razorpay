@@ -64,7 +64,7 @@ export const cancelSubscription = (razorpay: Razorpay) =>
           where: [{ field: 'id', value: body.subscriptionId }],
           update: {
             data: {
-              cancelAtPeriodEnd: body.immediately,
+              cancelAtPeriodEnd: !body.immediately,
               updatedAt: new Date(),
             },
           },
