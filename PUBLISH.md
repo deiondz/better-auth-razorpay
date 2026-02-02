@@ -44,7 +44,27 @@ npm publish --access public
 
 `prepublishOnly` runs `npm run build` then `npm run typecheck` before publish. The package ships compiled JavaScript from `dist/` so that Next.js (including Turbopack) and other bundlers can consume it without compiling TypeScript from `node_modules`. If build or typecheck fails, publish is aborted.
 
+## GitHub Action (automatic publish)
+
+A workflow in `.github/workflows/publish-npm.yml` publishes to npm when you:
+
+1. **Create a GitHub Release** (Releases → Create a new release), or  
+2. **Push a version tag** (e.g. `v2.0.28`):  
+   ```bash
+   npm version patch   # or minor / major
+   git push origin main
+   git push origin v2.0.28
+   ```
+
+**One-time setup:**
+
+1. Create an **npm Automation** (or Granular with “Publish” scope) token at [npmjs.com/settings](https://www.npmjs.com/settings) → **Access Tokens**.
+2. In your GitHub repo: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**.
+3. Name: `NPM_TOKEN`, Value: paste the npm token.
+
+After that, publishing a release or pushing a `v*` tag will run the workflow and publish to npm.
+
 ## After publishing
 
-- Bump version for future releases: `npm version patch` (or `minor` / `major`), then `npm publish`.
-- Package page: `https://www.npmjs.com/package/better-auth-razorpay`
+- Bump version for future releases: `npm version patch` (or `minor` / `major`), then `npm publish` (or use the GitHub Action above).
+- Package page: `https://www.npmjs.com/package/@deiondz/better-auth-razorpay`
